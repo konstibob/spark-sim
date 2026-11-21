@@ -38,6 +38,8 @@ export interface MatchState {
   cubeScores?: number[];
   penalties?: number;
   rescues?: number;
+  /** Push & Pull: seconds the robot has not really moved (the referee frees it at STUCK_S) */
+  stuck?: number;
 }
 
 export interface RuleEvent {
@@ -55,10 +57,23 @@ export interface RobotView {
   moving: boolean;
   name: string;
   green?: boolean;
+  /** heading (rad); lets the stuck rule tell turning on the spot from standing still */
+  yaw?: number;
 }
 
 /** rules art. 8: robots may start operating 5 s after the start signal */
 export const START_DELAY_S = 5;
+
+/**
+ * Push & Pull, "The robot is stuck for 10 seconds": the referee frees it once (−1 point); stuck again ends the
+ * round. The page does not define "stuck"; here it means the robot stayed within STUCK_MOVE_M of one spot and
+ * turned less than STUCK_TURN_RAD for STUCK_S seconds, whether its motors run or not (pushing against a wall,
+ * wedged on a cube, or standing still). Turning on the spot is not stuck.
+ */
+export const STUCK_S = 10;
+export const STUCK_WARN_S = 5;
+export const STUCK_MOVE_M = 0.03;
+export const STUCK_TURN_RAD = (30 * Math.PI) / 180;
 
 // Extra per-mode scoring, registered by the private competition overlay (koth, shuttle). The core handles
 // sumo / race / free; any other mode is dispatched to its registered handler, which keeps the Challenge-1
@@ -92,6 +107,10 @@ export class Rules {
   private go: number | null;
   private greenOn = false;
   private greenAt: number | null = null;
+  private stuckAnchor: { x: number; y: number; yaw: number } | null = null;
+  private stuckWarned = false;
+  /** slot the referee should free (set down elsewhere), taken by the world with takeFree() */
+  private freeRequest: number | null = null;
 
   constructor(
     private arena: Arena,
@@ -175,8 +194,10 @@ export class Rules {
         s.scores[0] = s.cubeScores.reduce((sum, v) => sum + v, 0) - (s.penalties ?? 0);
         const small = s.cubeScores.filter((v) => v === 3).length;
         const home = s.cubeScores.filter((v) => v === 1).length;
-        s.detail[0] = `${small} small · ${home} home · ${s.penalties ?? 0} penalty`;
         const r = robots[0];
+        if (r && running && !s.ended) this.judgeStuck(ev, r, dt);
+        const stuck = (s.stuck ?? 0) >= STUCK_WARN_S ? ` · STUCK ${Math.floor(s.stuck!)} s` : "";
+        s.detail[0] = `${small} small · ${home} home · ${s.penalties ?? 0} penalty${stuck}`;
         if (r?.moving && !running && !this.falseStart[0]) {
           this.falseStart[0] = true;
           ev.push({ kind: "warn", slot: 0, text: "False start: motors moved before A. Officially: restart with −1; a second false start scores 0. Reset this practice run." });
@@ -301,19 +322,57 @@ export class Rules {
     const s = this.state;
     const ev: RuleEvent[] = [];
     if (s.mode !== "push-pull" || s.phase !== "running" || s.ended) return ev;
-    if (action === "rescue") {
-      if (s.rescues) this.end(ev, 0, "stuck a second time");
-      else {
-        s.rescues = 1;
-        s.penalties = (s.penalties ?? 0) + 1;
-        s.scores[0] -= 1;
-        ev.push({ kind: "warn", text: "Referee rescue (−1 point). Shift+drag the robot free; a second rescue ends the round." });
-      }
-    } else {
+    if (action === "rescue") this.rescue(ev, "Referee rescue (−1 point). Shift+drag the robot free; a second rescue ends the round.");
+    else {
       if (action === "touch") { s.penalties = (s.penalties ?? 0) + 1; s.scores[0] -= 1; }
       this.end(ev, 0, action === "finish" ? "finished — referee confirmed green signal" : "touched robot or cube (−1 point)");
     }
     return ev;
+  }
+
+  /** Take the pending "free the robot" request (the world sets the robot down elsewhere). */
+  takeFree(): number | null {
+    const slot = this.freeRequest;
+    this.freeRequest = null;
+    return slot;
+  }
+
+  private judgeStuck(ev: RuleEvent[], r: RobotView, dt: number) {
+    const s = this.state;
+    const yaw = r.yaw ?? 0;
+    const a = this.stuckAnchor;
+    const turned = a ? Math.abs(Math.atan2(Math.sin(yaw - a.yaw), Math.cos(yaw - a.yaw))) : 0;
+    if (!a || Math.hypot(r.x - a.x, r.y - a.y) > STUCK_MOVE_M || turned > STUCK_TURN_RAD) {
+      this.stuckAnchor = { x: r.x, y: r.y, yaw };
+      this.stuckWarned = false;
+      s.stuck = 0;
+      return;
+    }
+    s.stuck = (s.stuck ?? 0) + dt;
+    if (s.stuck >= STUCK_WARN_S && !this.stuckWarned) {
+      this.stuckWarned = true;
+      ev.push({ kind: "warn", slot: 0, text: `${r.name} has not moved for ${STUCK_WARN_S} s — at ${STUCK_S} s the referee frees it (${s.rescues ? "second time: round over" : "−1 point"})` });
+    }
+    if (s.stuck >= STUCK_S) {
+      this.stuckAnchor = null;
+      s.stuck = 0;
+      const first = !s.rescues;
+      this.rescue(ev, `${r.name} stuck for ${STUCK_S} s: the referee puts it back in the start square (−1 point). Stuck a second time ends the round.`);
+      if (first) this.freeRequest = 0;
+    }
+  }
+
+  /** "We free it, once at most, and it costs you 1 point. If it gets stuck a second time, your round ends." */
+  private rescue(ev: RuleEvent[], text: string) {
+    const s = this.state;
+    if (s.rescues) {
+      this.end(ev, 0, "stuck a second time");
+      return;
+    }
+    s.rescues = 1;
+    s.penalties = (s.penalties ?? 0) + 1;
+    s.scores[0] -= 1;
+    ev.push({ kind: "warn", slot: 0, text });
   }
 
   private leader(): number | null {

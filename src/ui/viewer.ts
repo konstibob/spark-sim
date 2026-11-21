@@ -289,6 +289,11 @@ export class Viewer {
     }
     this.arenaMesh = group;
     this.scene.add(group);
+    // fog was tuned for the ~0.9 m dohyo: push it back on bigger arenas, or the far walls fade into the background
+    const scale = Math.max(1, Math.max(e.x1 - e.x0, e.y1 - e.y0) / 0.9);
+    const fog = this.scene.fog as THREE.Fog;
+    fog.near = 3 * scale;
+    fog.far = 8 * scale;
     // a new arena: the camera shows all of it
     if (!this.following) this.view("side");
   }
@@ -457,6 +462,11 @@ export class Viewer {
       aperture.position.set(0.00015, y, 0);
       tofModule.add(aperture);
     }
+    // Standoff from the top board up to the carrier, so the module does not float.
+    const mastLength = VL53L5CX.mount[2] - 0.006 - Z.height;
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.004, mastLength), pcb);
+    mast.position.set(-0.005, 0, -0.006 - mastLength / 2);
+    tofModule.add(mast);
     root.add(tofModule);
     tofModule.visible = false;
 

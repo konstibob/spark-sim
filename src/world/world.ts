@@ -20,6 +20,9 @@ const DEG = Math.PI / 180;
 /** roller (outer radius) -> sprocket (pitch radius) */
 const K_TRACK = ZUMO.outerRadius / ZUMO.pitchRadius;
 const RULES_EVERY = 5; // physics steps between rule evaluations
+/** a robot freed by the referee (stuck rule) is carried for 1 s, 4 cm above the floor */
+const LIFT_US = 1_000_000;
+const LIFT_M = 0.04;
 const SETTLE_STEPS = 150; // physics steps before t = 0 to let the robots come to rest
 /** proximity: ray directions of one receiver's fan, relative to its axis (degrees) */
 const PROX_KS: number[] = [];
@@ -116,6 +119,8 @@ interface RobotState {
   tofSerial: ToFSerialBridge;
   tofRand: Rand; // separate stream: observing ToF never changes motors or other sensors' random values
   green: boolean;
+  /** held in the air by the referee (stuck rule) until this sim time (µs), then set down at `pose` */
+  held?: { pose: Pose; until: number } | null;
 }
 
 export interface WorldOptions {
@@ -335,6 +340,12 @@ export class World {
       r.vbat = voc - iBatt * B.rInternal;
       r.soc = Math.max(0, r.soc - (iBatt * dt) / 3600 / B.capacityAh);
     }
+    // a robot the referee is carrying stays in the air, then is set down
+    for (const r of this.robots)
+      if (r.held) {
+        if (this.tUs < r.held.until) this.setPose(r, r.held.pose, LIFT_M);
+        else this.place(r.slot, r.held.pose);
+      }
     this.mj.mj_step(this.m, d);
     this.tUs += DT_US;
     // Capture only at sensor frame boundaries, independent of program polling or UI snapshots.
@@ -361,6 +372,7 @@ export class World {
     this.lastJudgeUs = this.tUs;
     if (!this.judging) return;
     const xpos = this.d.xpos;
+    const xmat = this.d.xmat;
     const views = this.robots.map((r) => ({
       x: xpos[r.body * 3],
       y: xpos[r.body * 3 + 1],
@@ -369,9 +381,36 @@ export class World {
       moving: r.cmd[0] !== 0 || r.cmd[1] !== 0,
       name: r.name,
       green: r.green,
+      yaw: Math.atan2(xmat[r.body * 9 + 3], xmat[r.body * 9]),
     }));
     const t = this.tUs / 1e6;
     for (const e of this.rules.step(t, dt, views, this.cubeViews())) this.events.push({ ...e, t });
+    const free = this.rules.takeFree();
+    if (free !== null) this.free(free);
+  }
+
+  /**
+   * The referee frees a stuck robot: lifts it, carries it to the start square and sets it down there in the start
+   * direction (if a cube lies there: the nearest clear spot around the centre). While it is in the air
+   * (LIFT_US) its line sensors read "nothing below" like a lifted real Zumo, so a program can notice it was moved
+   * and localise again. Where the real referee puts it is not on the rules page; this is the team's assumption.
+   */
+  free(slot: number) {
+    const r = this.robots[slot];
+    if (!r) return;
+    const start = this.arena.starts[slot % this.arena.starts.length];
+    const cubes = this.cubeViews();
+    const clear = (px: number, py: number) => cubes.every((c) => Math.hypot(c.pos[0] - px, c.pos[1] - py) > 0.11);
+    let spot: [number, number] | null = clear(start.x, start.y) ? [start.x, start.y] : null;
+    for (let ring = 0.12; ring <= 0.4 && !spot; ring += 0.03)
+      for (let k = 0; k < 16 && !spot; k++) {
+        const px = start.x + Math.cos((k * Math.PI) / 8) * ring;
+        const py = start.y + Math.sin((k * Math.PI) / 8) * ring;
+        if (clear(px, py)) spot = [px, py];
+      }
+    const [x, y] = spot ?? [start.x, start.y];
+    r.held = { pose: { x, y, yaw: start.yaw }, until: this.tUs + LIFT_US };
+    this.setPose(r, r.held.pose, LIFT_M);
   }
 
   private pressButtons() {
@@ -404,11 +443,17 @@ export class World {
   place(slot: number, pose: Pose) {
     const r = this.robots[slot];
     if (!r) return;
+    r.held = null;
+    this.setPose(r, pose, 0);
+  }
+
+  /** Put a robot at `pose`, `lift` metres above its resting height, at rest. */
+  private setPose(r: RobotState, pose: Pose, lift: number) {
     const q = this.d.qpos;
     const v = this.d.qvel;
     q[r.freeQpos] = pose.x;
     q[r.freeQpos + 1] = pose.y;
-    q[r.freeQpos + 2] = this.arena.surfaceZ + r.restZ;
+    q[r.freeQpos + 2] = this.arena.surfaceZ + r.restZ + lift;
     q[r.freeQpos + 3] = Math.cos(pose.yaw / 2);
     q[r.freeQpos + 4] = 0;
     q[r.freeQpos + 5] = 0;
@@ -416,7 +461,7 @@ export class World {
     for (let k = 0; k < 6; k++) v[r.freeDof + k] = 0;
     for (const dof of r.rollerDofs) v[dof] = 0;
     r.out = false;
-    this.rules.revive(slot); // moved back into the arena by hand: in play again
+    this.rules.revive(r.slot); // moved back into the arena by hand: in play again
     this.mj.mj_forward(this.m, this.d);
   }
 

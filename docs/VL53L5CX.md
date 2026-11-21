@@ -62,9 +62,11 @@ Source: [UM2884 §2.2](https://www.st.com/resource/en/user_manual/um2884-a-guide
 
 ## Simulation model and boundaries
 
-- Front mounting is an **assumption**: optical origin `(52, 0, 45)` mm in the chassis
-  frame, looking along +x; +y points left, +z up. Placement, yaw, pitch and roll all
-  transform the sensor. Mount position is shared between physics and the 3D model.
+- Front mounting: optical origin `(52, 0, 90)` mm in the chassis frame (origin at
+  ground level). The 90 mm height is measured on the robot; the 52 mm forward offset
+  is still an **assumption**. The sensor sits above the 6 cm cubes, so cubes show up
+  only in the lower rows. Looking along +x; +y points left, +z up. Placement, yaw,
+  pitch and roll all transform the sensor. Mount position is shared between physics and the 3D model.
 - Captures use simulation time at 15 Hz with 1 ms physics quantization. Reading the
   data or rendering snapshots never triggers extra captures. Pausing freezes capture.
 - Each zone samples a 3×3 angular area against actual MuJoCo collision geometry:
@@ -152,7 +154,7 @@ npm run test:tof
 
 ## Still needed for matching your physical experiment
 
-Measure the final mount height/angle; identify the breakout's power requirements;
+Measure the final mount angle and forward offset (height: 90 mm, measured); identify the breakout's power requirements;
 provide an ESP output sample to replace the provisional JSON contract; record
 known-distance walls/targets under intended lighting to calibrate detection and noise.
 No physical sensor was connected during this implementation.

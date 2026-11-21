@@ -4,6 +4,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { Arena } from "../shared/arenas.ts";
 import type { WorldSnapshot } from "../shared/protocol.ts";
 import { ZUMO } from "../shared/zumo-spec.ts";
+import { tofColor, tofSlope, VL53L5CX } from "../shared/vl53l5cx.ts";
 import { PUSH_PULL } from "../shared/push-pull.ts";
 import { PixelPass, type PixelMode } from "./pixel.ts";
 
@@ -19,6 +20,10 @@ interface RobotView {
   overlay: THREE.Group;
   proxFans: THREE.Mesh[];
   lineDots: THREE.Mesh[];
+  tofModule: THREE.Group;
+  tofFov: THREE.LineSegments;
+  tofPoints: THREE.Points;
+  tofSequence: number;
   label: HTMLDivElement;
 }
 
@@ -291,9 +296,12 @@ export class Viewer {
   // ---------------------------------------------------------------- robots
 
   setRobots(list: { name: string; color: string }[]) {
+    this.last = null;
     for (const r of this.robots) {
       this.scene.remove(r.root);
       disposeTree(r.root);
+      this.scene.remove(r.tofPoints);
+      disposeTree(r.tofPoints);
       r.label.remove();
     }
     this.robots = list.map((r) => this.makeRobot(r.name, r.color));
@@ -411,6 +419,7 @@ export class Viewer {
 
     // sensor view
     const overlay = new THREE.Group();
+    overlay.visible = this.overlayOn;
     root.add(overlay);
     const proxFans = Z.proxSensors.map((s) => {
       const geo = new THREE.CircleGeometry(1, 32, -Math.PI / 6, Math.PI / 3);
@@ -434,6 +443,36 @@ export class Viewer {
       return m;
     });
 
+    // Front-facing carrier + 6.4 × 3.0 × 1.5 mm module; mount assumption shared with physics.
+    const tofModule = new THREE.Group();
+    tofModule.position.set(...VL53L5CX.mount);
+    const carrier = new THREE.Mesh(new THREE.BoxGeometry(0.0016, 0.014, 0.012), pcb);
+    carrier.position.x = -0.002;
+    tofModule.add(carrier);
+    const tofChip = new THREE.Mesh(new THREE.BoxGeometry(0.0015, 0.0064, 0.003), steel);
+    tofChip.position.x = -0.00075;
+    tofModule.add(tofChip);
+    for (const y of [-0.0017, 0.0017]) {
+      const aperture = new THREE.Mesh(new THREE.BoxGeometry(0.0003, 0.0019, 0.0018), dark);
+      aperture.position.set(0.00015, y, 0);
+      tofModule.add(aperture);
+    }
+    root.add(tofModule);
+    tofModule.visible = false;
+
+    // A square FoV with 8×8 zone boundaries, attached to the current robot pose.
+    const tofFov = new THREE.LineSegments(tofFieldGrid(8), new THREE.LineBasicMaterial({ color: 0x36dec3, transparent: true, opacity: 0.3, depthWrite: false }));
+    tofFov.userData.resolution = 64;
+    tofFov.position.set(...VL53L5CX.mount);
+    root.add(tofFov);
+    const pointsGeometry = new THREE.BufferGeometry();
+    pointsGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(64 * 3), 3));
+    pointsGeometry.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(64 * 3), 3));
+    pointsGeometry.setDrawRange(0, 0);
+    const tofPoints = new THREE.Points(pointsGeometry, new THREE.PointsMaterial({ size: 0.005, vertexColors: true, depthTest: true }));
+    tofPoints.frustumCulled = false;
+    this.scene.add(tofPoints);
+
     // name tag (HTML, see placeLabels)
     const label = document.createElement("div");
     label.className = "tag";
@@ -443,7 +482,7 @@ export class Viewer {
     label.append(chip, document.createTextNode(name));
     this.labelLayer.append(label);
 
-    return { root, cleats, leds, yellow, oled, ring, overlay, proxFans, lineDots, label };
+    return { root, cleats, leds, yellow, oled, ring, overlay, proxFans, lineDots, label, tofModule, tofFov, tofPoints, tofSequence: -1 };
   }
 
   /** Rename a robot's tag without rebuilding the scene */
@@ -458,11 +497,13 @@ export class Viewer {
       (r.ring.material as THREE.MeshBasicMaterial).opacity = i === slot ? 0.95 : 0.25;
       r.label.classList.toggle("on", i === slot);
     });
+    if (this.last) this.update(this.last);
   }
 
   setOverlay(on: boolean) {
     this.overlayOn = on;
     for (const r of this.robots) r.overlay.visible = on;
+    if (this.last) this.update(this.last);
   }
 
   /** Draw an OLED buffer (SH1106, MONO_VLSB, hex) onto the robot's screen */
@@ -502,6 +543,35 @@ export class Viewer {
       if (!r) return;
       r.root.position.set(s.pos[0], s.pos[1], s.pos[2]);
       r.root.quaternion.set(s.quat[1], s.quat[2], s.quat[3], s.quat[0]);
+      const sensor = s.tof;
+      r.tofModule.visible = sensor?.enabled === true;
+      r.tofFov.visible = this.overlayOn && sensor?.enabled === true && sensor.ranging && i === this.selected;
+      r.tofPoints.visible = this.overlayOn && sensor?.enabled === true && i === this.selected;
+      if (sensor && r.tofFov.userData.resolution !== sensor.resolution) {
+        r.tofFov.geometry.dispose();
+        r.tofFov.geometry = tofFieldGrid(Math.sqrt(sensor.resolution));
+        r.tofFov.userData.resolution = sensor.resolution;
+      }
+      const frame = sensor?.frame;
+      if (!frame) {
+        r.tofPoints.geometry.setDrawRange(0, 0);
+        r.tofSequence = -1;
+      } else if (frame.sequence !== r.tofSequence) {
+        const positions = r.tofPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+        const colors = r.tofPoints.geometry.getAttribute("color") as THREE.BufferAttribute;
+        let count = 0;
+        frame.distanceMm.forEach((mm, zone) => {
+          if (frame.targetStatus[zone] !== 5 || !frame.targetsDetected[zone]) return;
+          const v = tofSlope(zone, Math.sqrt(sensor!.resolution)).map((x) => x * mm / 1000);
+          const R = frame.rotation, p = frame.origin;
+          positions.setXYZ(count, p[0] + R[0] * v[0] + R[1] * v[1] + R[2] * v[2], p[1] + R[3] * v[0] + R[4] * v[1] + R[5] * v[2], p[2] + R[6] * v[0] + R[7] * v[1] + R[8] * v[2]);
+          const c = new THREE.Color(tofColor(mm));
+          colors.setXYZ(count++, c.r, c.g, c.b);
+        });
+        positions.needsUpdate = colors.needsUpdate = true;
+        r.tofPoints.geometry.setDrawRange(0, count);
+        r.tofSequence = frame.sequence;
+      }
       // cleats move with the sprocket (pitch circle)
       const m = new THREE.Matrix4();
       const q = new THREE.Quaternion();
@@ -649,6 +719,18 @@ export class Viewer {
       }
     }
   }
+}
+
+function tofFieldGrid(size: number): THREE.BufferGeometry {
+  const edges: number[] = [];
+  const depth = 0.35;
+  const corner = (col: number, row: number) => tofSlope(0, 1, col, row).map((v) => v * depth);
+  for (let k = 0; k <= size; k++) {
+    edges.push(...corner(k / size, 0), ...corner(k / size, 1));
+    edges.push(...corner(0, k / size), ...corner(1, k / size));
+  }
+  for (const col of [0, 1]) for (const row of [0, 1]) edges.push(0, 0, 0, ...corner(col, row));
+  return new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(edges, 3));
 }
 
 /** Free the GPU memory of a removed object: geometries, materials and their textures */

@@ -2,6 +2,7 @@
 import type { RobotSnapshot } from "../shared/protocol.ts";
 import type { MatchState } from "../world/rules.ts";
 import { drawOled } from "./viewer.ts";
+import { tofColor } from "../shared/vl53l5cx.ts";
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -93,6 +94,7 @@ export function renderOled(display: { hex: string; inverted: boolean } | null) {
 }
 
 export function renderInspector(r: RobotSnapshot | undefined) {
+  renderToF(r);
   if (!r) return;
   const line = $("line");
   if (!line.childElementCount) for (let i = 0; i < 5; i++) line.insertAdjacentHTML("beforeend", `<div class="bar" title="DN${i + 1}"><i></i><b></b></div>`);
@@ -138,6 +140,35 @@ export function renderInspector(r: RobotSnapshot | undefined) {
     ["gyro °/s", read ? `${f(r.imu[3], 0)} ${f(r.imu[4], 0)} ${f(r.imu[5], 0)}` : "not read"],
     ["mag G", read ? `${f(r.imu[6])} ${f(r.imu[7])} ${f(r.imu[8])}` : "not read"],
   ]);
+}
+
+function renderToF(r: RobotSnapshot | undefined) {
+  const sensor = r?.tof;
+  const frame = sensor?.frame;
+  const grid = $("tof-grid");
+  const on = sensor?.enabled === true;
+  grid.classList.toggle("hidden", !on);
+  $("tof-legend").classList.toggle("hidden", !on);
+  if (!on) {
+    $("tof-info").textContent = "Enable for a live 8×8 depth image on any arena.";
+    grid.replaceChildren();
+    return;
+  }
+  const size = Math.sqrt(sensor.resolution);
+  $("tof-info").textContent = `${size}×${size} · ${sensor.frequencyHz} Hz · 45° × 45° · ${!sensor.ranging ? "stopped" : frame ? `frame ${frame.sequence} · ${(frame.capturedAtUs / 1e6).toFixed(2)} s` : "waiting for first frame…"}`;
+  grid.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+  if (grid.childElementCount !== sensor.resolution) grid.replaceChildren(...Array.from({ length: sensor.resolution }, () => document.createElement("span")));
+  // Display left-to-right as a person behind the sensor sees the scene. Raw zone 0 is top right.
+  [...grid.children].forEach((cell, i) => {
+    const zone = Math.floor(i / size) * size + size - 1 - i % size;
+    const valid = frame?.targetStatus[zone] === 5 && frame.targetsDetected[zone] > 0;
+    const mm = frame?.distanceMm[zone] ?? 0;
+    const el = cell as HTMLElement;
+    el.textContent = valid ? String(mm) : "—";
+    el.style.background = valid ? tofColor(mm) : "";
+    el.classList.toggle("valid", valid);
+    el.title = `Zone ${zone} · ${valid ? `${mm} mm` : "no valid return"} · status ${frame?.targetStatus[zone] ?? "pending"}`;
+  });
 }
 
 function kv(el: HTMLElement, rows: [string, string][]) {

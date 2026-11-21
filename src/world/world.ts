@@ -6,6 +6,9 @@ import { C, NOMINAL, OP, ST, type RobotChannel, type RobotSnapshot, type WorldEv
 import { COST_US, ZUMO } from "../shared/zumo-spec.ts";
 import { buildMjcf, DRIVEN } from "./mjcf.ts";
 import { Rules } from "./rules.ts";
+import { ToFSensor } from "./vl53l5cx.ts";
+import { VL53L5CX } from "../shared/vl53l5cx.ts";
+import { ToFSerialBridge } from "./tof-serial.ts";
 import { type CubeView, validCubeLayout } from "../shared/push-pull.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -109,6 +112,9 @@ interface RobotState {
   started: boolean;
   /** chassis height above the surface at rest (measured after settling) */
   restZ: number;
+  tof: ToFSensor;
+  tofSerial: ToFSerialBridge;
+  tofRand: Rand; // separate stream: observing ToF never changes motors or other sensors' random values
   green: boolean;
 }
 
@@ -122,6 +128,7 @@ export interface WorldOptions {
   presses?: { button: "A" | "B" | "C"; t: number }[];
   /** battery, grip and sensor noise for robustness tests */
   tweaks?: WorldTweaks;
+  tof?: boolean[];
   cubes?: Pose[];
 }
 
@@ -237,6 +244,9 @@ export class World {
         lastAlive: 0,
         started: false,
         restZ: 0.0005,
+        tof: new ToFSensor(),
+        tofSerial: new ToFSerialBridge(),
+        tofRand: new Rand(seed * 3571 + i * 65537 + 53),
         green: false,
       });
     });
@@ -281,6 +291,7 @@ export class World {
     for (const r of this.robots) r.restZ = this.d.qpos[r.freeQpos + 2] - arena.surfaceZ;
     this.proxThreshold = opt.proxThreshold ?? 1;
     this.rules = new Rules(arena, this.robots.length);
+    this.robots.forEach((r, i) => r.tof.enable(opt.tof?.[i] === true, 0));
   }
 
   dispose() {
@@ -320,6 +331,8 @@ export class World {
     }
     this.mj.mj_step(this.m, d);
     this.tUs += DT_US;
+    // Capture only at sensor frame boundaries, independent of program polling or UI snapshots.
+    for (const r of this.robots) this.updateToF(r);
     const xpos = d.xpos;
     let newlyOut = false;
     for (const r of this.robots) {
@@ -437,6 +450,30 @@ export class World {
 
   // ------------------------------------------------------------------ sensors
 
+  setToF(slot: number, enabled: boolean) {
+    const r = this.robots[slot];
+    if (!r) return;
+    r.tof.enable(enabled, this.tUs);
+    r.tofSerial.reset();
+  }
+
+  private updateToF(r: RobotState) {
+    if (!r.tof.enabled || !r.tof.ranging) return;
+    if (!r.tof.due(this.tUs)) return;
+    // mj_step integrates qpos after computing xpos/xmat. Refresh for the current capture pose.
+    this.mj.mj_forward(this.m, this.d);
+    const origin = this.toWorld(r, ...VL53L5CX.mount);
+    const rotation = Array.from(this.d.xmat.slice(r.body * 9, r.body * 9 + 9)) as number[];
+    r.tof.tick(this.tUs, origin, rotation, (local) => {
+      const direction = this.dirWorld(r, local[0], local[1], local[2]);
+      const hit = this.ray(origin, direction, [1, 1, 1, 0, 0, 0], r.body);
+      if (hit.d < 0) return null;
+      const p = origin.map((v, i) => v + direction[i] * hit.d);
+      return { distance: hit.d, reflectance: this.reflectivity(hit.geom, p, this.normBuf.GetView()) };
+    }, (sigma) => this.tweaks.noise === 0 ? 0 : r.tofRand.gauss(sigma * this.tweaks.noise));
+    if (r.tof.frame) r.tofSerial.publish(r.tof.frame, r.tof.resolution);
+  }
+
   /** 5 raw values like LineSensors.read(): small = bright, TIMEOUT = black / nothing below */
   readLine(r: RobotState, emitters: boolean): number[] {
     const out: number[] = [];
@@ -528,6 +565,8 @@ export class World {
     switch (this.geomKind[geom]) {
       case GEOM.blade:
         return R.blade;
+      case GEOM.roller:
+        return R.track;
       case GEOM.hull: {
         const robot = this.robots[this.geomRobot[geom]];
         const nl = this.toLocalDir(robot.body, normal);
@@ -703,6 +742,45 @@ export class World {
         f64[1] = this.readBattery(r);
         f64[0] = t + COST_US.battery;
         break;
+      case OP.ToF: {
+        const result = r.tof.command(a, b, this.tUs);
+        if (result === 1 && [1, 4, 5].includes(a)) r.tofSerial.reset();
+        const sensor = r.tof.snapshot();
+        const frame = sensor.frame;
+        f64.fill(0, 1);
+        f64[1] = result;
+        f64[2] = sensor.resolution;
+        f64[3] = sensor.frequencyHz;
+        f64[4] = Number(sensor.ranging);
+        f64[5] = frame?.sequence ?? 0;
+        f64[6] = frame?.capturedAtUs ?? 0;
+        if (a === 7 && frame && result === 1) {
+          f64.set(frame.distanceMm, 7);
+          f64.set(frame.targetStatus, 71);
+          f64.set(frame.targetsDetected, 135);
+        }
+        // Estimated 400 kHz I²C transfer: compact single-return payload plus metadata.
+        f64[0] = t + (a === 7 ? Math.ceil((24 + sensor.resolution * 4) * 9 / 0.4) : 100);
+        break;
+      }
+      case OP.ToFUart: {
+        const port = f64[4];
+        const capacity = f64[3];
+        let bytes: number[] = [];
+        let available = 0;
+        if (port === 0) {
+          if (a === 2) r.tofSerial.configure(b, capacity);
+          if (r.tof.enabled) {
+            if (a === 1) bytes = r.tofSerial.read(this.tUs, Math.max(0, Math.min(200, Math.floor(b))));
+            available = r.tofSerial.available(this.tUs);
+          }
+        }
+        f64.fill(0, 1);
+        f64[1] = a === 1 ? bytes.length : available;
+        f64.set(bytes, 2);
+        f64[0] = t + 20; // host buffer access, wire time is accounted for by the bridge
+        break;
+      }
       default:
         f64[0] = t; // unknown request (only possible by tampering with the runtime): answer like a sync
         break;
@@ -828,6 +906,7 @@ export class World {
         yaw: Math.atan2(fy, fx) / DEG,
         tilt: Math.acos(Math.max(-1, Math.min(1, R[b * 9 + 8]))) / DEG,
         out: r.out,
+        tof: r.tof.snapshot(),
       };
     });
     return { t: this.tUs / 1e6, realtime, robots, match: structuredClone(this.rules.state), cubes: this.cubeViews() };

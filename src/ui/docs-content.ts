@@ -645,6 +645,25 @@ mpremote run challenge1.py                 # or: run it without saving, output i
 
   // ================================================================ Programming the Zumo
   {
+    id: "vl53l5cx",
+    group: "Programming the Zumo",
+    title: "VL53L5CX · ESP32-C6",
+    summary: "Enable the 8×8 depth sensor on any arena and read the ESP serial stream.",
+    blocks: [
+      { p: "Select a robot and click **VL53L5CX** above the 3D view, or enable it at the top of the Inspector. It works on every arena. The selection is saved with the robot. The **Sensors** button shows its 3D field grid and measured points; the module itself stays visible. The timeline records its depth frames too." },
+      { table: { head: ["Setting", "Value"], rows: [["Sensor / bridge", "VL53L5CX → I²C → ESP32-C6 → UART → Zumo 2040"], ["Experiment mode", "8×8 zones at 15 Hz, continuous, one strongest return"], ["Field of view", "45° horizontal × 45° vertical (65° nominal diagonal)"], ["Reported depth", "20–4000 mm along the optical axis"], ["Front mount assumption", "52 mm forward, 45 mm above chassis origin"], ["Serial assumption", "UART0, 115200 baud, 8N1, JSON lines"]] } },
+      { note: "The real 8×8 mode is limited to 15 Hz. 60 Hz applies to 4×4. Ray geometry, occlusion, orientation and frame timing are modeled. Ambient IR, real material detection limits, glass, crosstalk and multi-target optics are not calibrated. This is a geometric approximation, not guaranteed hardware equivalence.", kind: "warn" },
+      { p: "The Inspector shows the scene as seen from behind the sensor: top left is raw zone 7, top right is zone 0. Each square shows millimetres, or — for no valid target. The sensor already corrects radial range into axis depth, so a perpendicular wall has equal depth across the image." },
+      { p: "All 64 zones are sampled. With the assumed level mount about 45 mm above the table, the lower four rows look down at the floor and the upper four look above the horizon. Empty upper cells are expected without a tall target. The 3D wire grid is a reference plane 350 mm ahead: parts below the floor are hidden by the scene. It is not the measured depth image; use the Inspector and the coloured measured points for actual returns. Mount height and angle must be matched to your physical assembly." },
+      { h: "Reading the ESP bridge" },
+      { p: "No existing ESP firmware format was supplied. This implementation proposes LF-terminated JSON objects with fields `type` (vl53l5cx), `seq`, `t_us`, `resolution` (64), `distance_mm`, `target_status` and `nb_target_detected`. Each array has 64 entries in ULD order. Check status 5 and a nonzero count before using a distance; invalid distances are zero, not an obstacle at maximum range." },
+      { p: "Use `machine.UART(0, 115200, timeout=0, rxbuf=4096)` directly or import the supplied `spark_tof.ToFSerial` reader. Partial serial messages take wire time to arrive; the reader waits for a whole JSON line. Copy spark_tof.py to the real robot and match the ESP firmware to this contract first. This helper is not a stock Pololu or ST driver." },
+      { code: "from spark_tof import ToFSerial\nimport time\n\nsensor = ToFSerial()\nwhile True:\n    frame = sensor.read()\n    if frame is not None:\n        valid = [mm for mm, status, count in zip(\n            frame['distance_mm'], frame['target_status'],\n            frame['nb_target_detected']\n        ) if status == 5 and count > 0]\n        print('nearest_mm:', min(valid)) if valid else print('No valid target')\n    time.sleep_ms(5)\n", title: "Complete program · enable VL53L5CX before Run", insert: true },
+      { p: "For a moving demonstration choose **Examples → VL53L5CX · ESP serial**. It slowly turns in place; use the free arena. Full specifications, model assumptions and the proposed wire contract are in docs/VL53L5CX.md in the repository." },
+      { p: "Primary references: [ST datasheet DS13754](https://www.st.com/resource/en/datasheet/vl53l5cx.pdf), [ST driver manual UM2884](https://www.st.com/resource/en/user_manual/um2884-a-guide-to-using-the-vl53l5cx-multizone-timeofflight-ranging-sensor-with-a-wide-field-of-view-ultra-lite-driver-uld-stmicroelectronics.pdf)." },
+    ],
+  },
+  {
     id: "program-structure",
     group: "Programming the Zumo",
     title: "Program structure",

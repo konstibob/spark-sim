@@ -14,6 +14,7 @@ OP_PROX = 5
 OP_IMU = 6
 OP_ENC = 7
 OP_BAT = 8
+OP_TOF_UART = 11
 
 # Timers: [due_us, period_us (0 = one shot), callback, timer_object]
 timers = []

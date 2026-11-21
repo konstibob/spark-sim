@@ -146,28 +146,84 @@ SoftSPI = SPI
 
 
 class UART:
-    def __init__(self, *a, **k):
-        pass
+    # UART0 is the optional ESP32-C6 depth bridge; other UARTs remain unconnected.
+    def __init__(self, id=0, baudrate=115200, **kwargs):
+        if id not in (0, 1):
+            raise ValueError("UART id must be 0 or 1")
+        self._id = id
+        self.init(baudrate, **kwargs)
 
-    def init(self, *a, **k):
-        pass
+    def init(self, baudrate=115200, *, bits=8, parity=None, stop=1, tx=None, rx=None,
+             timeout=0, timeout_char=1, txbuf=256, rxbuf=4096, **kwargs):
+        if bits != 8 or parity is not None or stop != 1:
+            raise ValueError("ESP depth bridge requires 8N1")
+        if not isinstance(baudrate, int) or baudrate < 1200 or baudrate > 3000000:
+            raise ValueError("unsupported baudrate")
+        self._baud = baudrate
+        self._timeout = max(0, timeout)
+        self._timeout_char = max(1, timeout_char)
+        self._active = True
+        _rt.rpc(_rt.OP_TOF_UART, 2, baudrate, rxbuf, self._id)
 
     def deinit(self):
-        pass
+        self._active = False
 
     def any(self):
-        return 0
+        if not self._active:
+            return 0
+        return int(_rt.rpc(_rt.OP_TOF_UART, 0, 0, 0, self._id)[1])
 
-    def read(self, n=-1):
-        return None
+    def read(self, n=None):
+        if not self._active:
+            return None
+        if n == 0:
+            return b""
+        if n is not None and n < 0:
+            raise ValueError("negative read length")
+        end = _rt.now_us() + self._timeout * 1000
+        while not self.any():
+            if _rt.now_us() >= end:
+                return None
+            _rt.sleep_until(min(end, _rt.now_us() + 1000))
+        remaining = self.any() if n is None else min(n, self.any())
+        out = bytearray()
+        while remaining:
+            result = _rt.rpc(_rt.OP_TOF_UART, 1, min(200, remaining), 0, self._id)
+            count = int(result[1])
+            if not count:
+                break
+            for i in range(count):
+                out.append(int(result[2 + i]))
+            remaining -= count
+        return bytes(out) if out else None
 
     def readline(self):
-        return None
+        out = bytearray()
+        end = _rt.now_us() + self._timeout * 1000
+        while True:
+            if self.any():
+                value = self.read(1)
+                if value:
+                    out.extend(value)
+                    if value == b"\n":
+                        break
+                    end = _rt.now_us() + self._timeout_char * 1000
+            elif _rt.now_us() >= end:
+                break
+            else:
+                _rt.sleep_until(min(end, _rt.now_us() + 1000))
+        return bytes(out) if out else None
 
-    def readinto(self, buf, n=-1):
-        return None
+    def readinto(self, buf, n=None):
+        value = self.read(len(buf) if n is None else min(n, len(buf)))
+        if value is None:
+            return None
+        buf[:len(value)] = value
+        return len(value)
 
     def write(self, buf):
+        # Proposed bridge is receive-only. No sensor configuration command protocol yet.
+        _rt.sleep_until(_rt.now_us() + len(buf) * 10 * 1000000 // self._baud)
         return len(buf)
 
 

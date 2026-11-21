@@ -68,6 +68,7 @@ interface Slot {
   name: string;
   source: string; // "custom" or a bot id like "<category>/<bot>.py"
   code: string; // your own code (kept even while a house bot is selected)
+  tof?: boolean;
 }
 
 let arenaId = arenaById(new URLSearchParams(location.search).get("arena") ?? String(store.get("arena", "push-pull"))).id;
@@ -91,7 +92,7 @@ function loadSlots(raw: unknown): Slot[] {
       const code = typeof s.code === "string" ? s.code : "";
       const source = typeof s.source === "string" && (s.source === CUSTOM || BOT_BY_ID[s.source]) ? s.source : CUSTOM;
       const name = typeof s.name === "string" && s.name.trim() ? s.name.slice(0, 24) : `Robot ${i + 1}`;
-      return { name, source, code };
+      return { name, source, code, tof: s.tof === true };
     })
     .slice(0, arenaById(arenaId).maxRobots);
   return list.length ? list : defaultSlots();
@@ -347,7 +348,8 @@ function load(
   $("tl-play").textContent = "▶";
   recording = run;
   liveDone = new Set();
-  const robots = opts.robots ?? slots.map((s) => ({ name: s.name, code: codeOf(s) }));
+  const robots = opts.robots ?? slots.map((s) => ({ name: s.name, code: codeOf(s), tof: s.tof }));
+  lastLive = null;
   scene = { names: robots.map((r) => r.name), colors: robots.map((_, i) => COLORS[i % COLORS.length]), fromSlots: !opts.robots, arena: opts.arena ?? arenaId };
   renderConsoleFilter();
   runState = robots.map((r) => (run && r.code.trim() ? "run" : "idle"));
@@ -368,6 +370,7 @@ function load(
   }
   renderOled(null);
   renderLeds(null);
+  renderInspector(undefined);
   const seed = opts.seed ?? (Math.random() * 1e9) >>> 0;
   const startAt = opts.startAt !== undefined ? opts.startAt : autoStart ? 0.2 : null;
   let poses = opts.poses;
@@ -424,6 +427,7 @@ function drawTelemetry(cursorT: number | null, force: boolean) {
 let frameCounter = 0;
 function showFrame(s: WorldSnapshot, replay = false) {
   viewer.update(s);
+  updateInspectorHead(s);
   if (s.match.mode === "push-pull") pushPullMap.update(s, !recording && !replay);
   // before Run the world is only a preview: no match clock
   $("simtime").textContent = !recording && !replay ? "ready" : `${s.t.toFixed(2)} s`;
@@ -626,10 +630,32 @@ function selectRobot(slot: number) {
   }
 }
 
-function updateInspectorHead() {
+function updateInspectorHead(snapshot?: WorldSnapshot) {
   $("insp-name").textContent = scene.names[selected] ?? slots[selected]?.name ?? "Robot";
   $("insp-dot").style.background = scene.colors[selected] ?? COLORS[selected % COLORS.length];
+  const displayed = snapshot ?? (!live ? recorder.frameAt(cursor) : null);
+  const enabled = displayed ? displayed.robots[selected]?.tof?.enabled === true
+    : scene.fromSlots ? slots[selected]?.tof === true : lastLive?.robots[selected]?.tof?.enabled === true;
+  $<HTMLInputElement>("tof-enabled").checked = enabled;
+  $<HTMLInputElement>("tof-enabled").disabled = !scene.fromSlots || !live;
+  $<HTMLButtonElement>("tof-toggle").disabled = !scene.fromSlots || !live;
+  $("tof-toggle").setAttribute("aria-pressed", String(enabled));
 }
+
+function enableToF(enabled: boolean) {
+  if (!scene.fromSlots || !live || !slots[selected]) return;
+  slots[selected].tof = enabled;
+  saveSlots();
+  host.setToF(selected, enabled);
+  if (enabled) {
+    if (!layout.visible("inspector")) layout.toggle("inspector", true);
+    if ($("overlay").getAttribute("aria-pressed") !== "true") $("overlay").click();
+  }
+  updateInspectorHead();
+}
+$<HTMLInputElement>("tof-enabled").onchange = (e) => enableToF((e.target as HTMLInputElement).checked);
+$("tof-toggle").onclick = () => enableToF(!slots[selected]?.tof);
+$("tof-docs").onclick = () => openDocs("vl53l5cx");
 
 function renderTabs() {
   const tabs = $("tabs");
@@ -1159,7 +1185,7 @@ document.querySelectorAll<HTMLButtonElement>(".dock-tabs [data-tab]").forEach((b
 new ResizeObserver(() => dockTab === "telemetry" && drawTelemetry(live ? null : cursor, true)).observe($("telemetry"));
 
 const bench = new BenchPanel($("bench"), {
-  slots: () => slots.map((s) => ({ name: s.name, code: codeOf(s) })),
+  slots: () => slots.map((s) => ({ name: s.name, code: codeOf(s), tof: s.tof })),
   arena: () => arenaId,
   tweaks: () => tweaks,
   cubes: () => cubeLayout.map((p) => ({ ...p })),

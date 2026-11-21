@@ -81,13 +81,21 @@ def go(tx, ty):
     settle()
     print("odometry", round(x, 3), round(y, 3))
 
-display.fill(0)
-display.text("Push & Pull", 0, 0)
-display.text("A: start", 0, 16)
-display.text("Example map", 0, 32)
-display.show()
-while not button.check():
-    time.sleep_ms(10)
+# Start block as in the team template: the Crew's spark_start (in the simulator: button A, go at once).
+try:
+    from spark_start import wait_for_start
+except ImportError:
+    def wait_for_start():
+        """Practice start without spark_start: press A, the robot moves 5 s later."""
+        display.fill(0)
+        display.text("Push & Pull", 0, 0)
+        display.text("A: start", 0, 16)
+        display.show()
+        while not button.check():
+            time.sleep_ms(10)
+        time.sleep(5)
+
+wait_for_start()
 
 # Drive around the cube, line up behind it, then push towards home.
 # Cube 1 starts at x=43 cm, y=0. All distances are metres.

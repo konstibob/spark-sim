@@ -13,6 +13,92 @@ Made by the SPARK robotics community. MIT-licensed — self-host it, fork it, us
 > on real hardware**. Results here are approximate and come with no guarantee of accuracy — don't rely on
 > them for anything safety- or outcome-critical.
 
+## What we're working on: SPARK Maker Night · Challenge 2 "Push & Pull"
+
+We use this fork to develop and test our program for
+[Challenge 2](https://makernight.spark-hpi.de/en/docs/challenge-2/) of the SPARK Maker Night (HPI).
+The code that actually runs at the event is `challenge2.py` in our team repo
+[spark-hpi/team-green](https://github.com/spark-hpi/team-green) (private). This repo is only the simulator.
+
+**Round:** Sat 21.11., 11:00, Project Studio. **Code freeze Sat 10:30** (what is on `main` of
+team-green then gets flashed). One of us brings the robot to the shop **by 10:40**, otherwise we don't start.
+Be at the arena when our team is called, or we get 0 points.
+
+### The task
+
+"Your robot starts in the middle, finds the reflective cubes and pushes them back home." One robot alone,
+one round of **2 minutes**.
+
+- **Arena:** about 160 × 160 cm, light floor, **black** walls 10 cm high (unlike Challenge 1).
+- **Home:** two black tape squares in the centre, 30 cm and, inside it, 12 cm. The robot starts in the
+  12 cm square; the referee lines up every robot facing the same direction.
+- **Cubes:** five reflective 6 × 6 × 6 cm cubes, in the **same spots for every team** (the layout is not
+  published). Not all five fit into the small square.
+- **Calibration phase** before the round: tune the robot to what its sensors read at a cube and at the wall.
+
+### Scoring
+
+| Where a cube lies at the end | Points |
+|---|---|
+| completely inside the 12 cm square | 3 |
+| at least half inside the 30 cm square | 1 |
+| anywhere else | 0 |
+
+Four cubes fit exactly into the small square, so the maximum is **13 points**. The round ends after
+2 minutes, or when the robot **blinks green** to say it is done (we have to program that). Equal points:
+**the shorter time wins**, so finishing early with a green blink is worth it. Overall ranking:
+1st place gets 8 points, 8th place 1.
+
+| Event | Consequence |
+|---|---|
+| Robot moves too early | Start repeated, −1. A second time: round over, 0 points |
+| Stuck for 10 s | Freed once, −1. A second time ends the round |
+| Robot leaves the arena | Round over, −2 |
+| We touch the robot or a cube | Round over, −1 |
+
+Only the referee touches robot and cubes. No end-program button.
+
+### Hardware
+
+Pololu [Zumo 2040](https://www.pololu.com/product/5010) (RP2040, MicroPython, 75:1 HP motors, wide-angle
+white front IR LEDs): 2 motors with encoders, 5 down-facing line sensors, IR proximity (front/left/right,
+0–6 counts, sees things up to ~30 cm, ~9 ms per `prox.read()`), IMU, 128 × 64 OLED, buttons A/B/C,
+6 RGB LEDs, buzzer, 4 × AA NiMH. Weight limit **500 g**, no fixed size limit for Push & Pull
+(the referee decides).
+
+Optional parts from the SPARK shop go on I2C0 (GP4 SDA, GP5 SCL) or the two free pins GP28/GP29:
+VL53L4CD (1 distance, 1.2 m), VCNL4200 (IR distance 1.5 m), **VL53L5CX** (8 × 8 ToF, 4 m, uploads
+its firmware over I2C at every start, a few seconds), SEN0628 (8 × 8 ToF, 60°), BNO085 IMU,
+9 g servo + PCA9685 driver, IR LED pair. Soldering only in the Hardware Studio (closed Sat 00:00–07:00).
+
+**Not allowed:** any radio on the robot (*"an ESP32 with Wi-Fi or Bluetooth"*), electronics that are not
+from the shop, remote control of any kind, batteries other than 4 × AA NiMH. A script checks the code for
+radio and remote control at check-in.
+
+### Team repo rules (spark-hpi/team-green)
+
+- `challenge2.py` in the **top level**, exactly this name. Extra modules also top level (subfolders are not
+  copied). Never `main.py` or `boot.py`.
+- **Keep the start block**: `from spark_start import wait_for_start` and `wait_for_start()` as the first
+  step of `main()`. The crew copies its own `spark_start.py` onto the robot when flashing. Without it
+  (practising at home) the template falls back to button A + 5 s countdown.
+- `motors.off()` in the `finally` block. The file runs at top level (the menu imports it): no
+  `if __name__ == "__main__"`.
+- Commit directly to `main`. Other branches, unmerged PRs, USB sticks don't count. At the freeze the repo
+  goes read-only and `main` is tagged `submission`; check that tag right after.
+- The robot API cheat sheet is `API.md` in the team repo. Test with Thonny + the Pololu plugin or `mpremote`.
+- Tips from the crew's test runs: calibrate line sensors on the real floor (white ≈ 23–50, thin black tape
+  ≈ 250–325), and `time.sleep_ms(5)` in fast loops.
+
+### Open questions for the crew
+
+1. **Start signal.** The Challenge 2 page says the referee presses **button A** and the robot must start
+   on it ("not the IR signal"). The rules page and the template say the crew's **IR signal** starts the
+   robot via `spark_start`. Ask which one applies, and whether there is a 5 s delay.
+2. **ESP32 bridge.** Our VL53L5CX experiment assumes an ESP32-C6 between sensor and Zumo. The C6 has
+   Wi-Fi/Bluetooth, and an ESP is not a shop part, so it most likely fails check-in. The VL53L5CX from the
+   shop is meant to go straight onto I2C0.
+
 ## Quick start
 
 ```bash
@@ -28,7 +114,7 @@ Headless match without a browser (deterministic per seed):
 npx tsx tests/match.ts src/examples/sumo_starter.py --arena dohyo --press A@0.2 --seed 7
 ```
 
-## Challenge 2: Push & Pull
+## Simulating Challenge 2: Push & Pull
 
 Open `http://127.0.0.1:5173/?arena=push-pull` after `npm run dev -- --host 127.0.0.1`.
 The arena has a **160 × 160 cm clear floor**, **10 cm black walls**, centred **30 × 30 cm**
@@ -43,6 +129,10 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   A starts immediately, with **no sumo countdown**. The demo drives behind the first example
   cube and pushes it into the big square. It uses known example waypoints and encoder/gyro
   odometry; adapt it for another layout. Your own MicroPython uses the normal robot APIs.
+- **Challenge 2 · team template** is the unchanged `challenge2.py` from team-green. The simulator ships its
+  own `spark_start.py`, so the template's start block works here: `wait_for_start()` returns the moment
+  button A (Start, key S, the bench, `--press A@t`) is pressed, like the Crew's IR start, with no 5 s practice
+  delay. Write your program on top of the template and it copies 1:1 into the team repo.
 - Scoring is live, from each cube's rotated footprint. 12 and 30 cm are inner sizes and the
   2.5 cm tape around them counts: **3 points** completely within the small square including its
   tape (17 × 17 cm), otherwise **1 point** for at least half within the big square including its

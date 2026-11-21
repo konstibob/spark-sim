@@ -1,5 +1,6 @@
 import type { DiscoveryPacket } from "./discovery.ts";
 import { tofSlope, VL53L5CX, type ToFFrame } from "./vl53l5cx.ts";
+import { ZUMO } from "./zumo-spec.ts";
 
 type Pose = [number, number, number];
 type Ray = [number, number, number, number];
@@ -21,6 +22,10 @@ const CUBE_JOIN = 0.09;
 const CUBE_MEMORY = 8;
 /** Five cubes in the arena; room for a few stray sightings on top. */
 const CUBE_MAX = 16;
+/** A sighting this much farther off than its zone width explains: the cube was moved, follow at once. */
+const CUBE_SHIFT = 0.015;
+/** Closer than this to the sensor a cube's 6 cm top is below the 45° view (9 cm mount): beams pass over it. */
+const CUBE_BLIND = (VL53L5CX.mount[2] - CUBE) / Math.tan(VL53L5CX.fovDeg * Math.PI / 360) + 0.01;
 
 /** One column of a ToF frame: nearest robot-high return, its lateral slope, and whether a wall-high return backs it. */
 export type ToFColumn = { depth: number; tan: number; tall: boolean } | null;
@@ -56,8 +61,10 @@ export function cubeSightings(columns: ToFColumn[], mountX: number, fovRad: numb
   return out;
 }
 
-/** Fold one map-frame sighting into the known cubes: same cube when close, else a new one. */
-export function addCube(cubes: CubeEstimate[], x: number, y: number): CubeEstimate {
+/** Fold one map-frame sighting into the known cubes: same cube when close, else a new one.
+ * `slack` is how far the sighting may scatter (zone width at its depth); farther off than that,
+ * the cube was moved and jumps to the sighting instead of averaging slowly towards it. */
+export function addCube(cubes: CubeEstimate[], x: number, y: number, slack = Infinity): CubeEstimate {
   let best: CubeEstimate | null = null, gap = CUBE_JOIN;
   for (const c of cubes) {
     const d = Math.hypot(c[0] - x, c[1] - y);
@@ -70,7 +77,7 @@ export function addCube(cubes: CubeEstimate[], x: number, y: number): CubeEstima
     cubes.push(best);
     return best;
   }
-  const w = Math.min(best[2], CUBE_MEMORY);
+  const w = gap > CUBE_SHIFT + slack ? 0 : Math.min(best[2], CUBE_MEMORY);
   best[0] = (best[0] * w + x) / (w + 1);
   best[1] = (best[1] * w + y) / (w + 1);
   best[2]++;
@@ -81,9 +88,29 @@ export function addCube(cubes: CubeEstimate[], x: number, y: number): CubeEstima
 export function seenThrough(cube: CubeEstimate, [ox, oy, ex, ey]: Ray): boolean {
   const dx = ex - ox, dy = ey - oy, length = Math.hypot(dx, dy);
   const along = ((cube[0] - ox) * dx + (cube[1] - oy) * dy) / length;
-  if (along < 0 || along > length - CUBE) return false;
+  // Right in front of the sensor the beams pass over the cube: no evidence either way.
+  if (along - CUBE / 2 < CUBE_BLIND || along > length - CUBE) return false;
   // Within half a cube of the centre the bright cube would have filled that zone.
   return Math.abs((cube[0] - ox) * dy - (cube[1] - oy) * dx) / length < CUBE / 2;
+}
+
+/** The robot's footprint (front of the blade, rear, half width) pushes every known cube it overlaps:
+ * a cube ahead of the front edge is pushed forward, one behind the rear backwards, one beside the
+ * body sideways. Robot pose and cubes in the map frame. Returns the cubes that moved, with their old centre. */
+export function pushCubes(cubes: CubeEstimate[], [x, y, heading]: Pose): [CubeEstimate, number, number][] {
+  const c = Math.cos(heading), s = Math.sin(heading), h = CUBE / 2;
+  const moved: [CubeEstimate, number, number][] = [];
+  for (const cube of cubes) {
+    let fx = c * (cube[0] - x) + s * (cube[1] - y), fy = -s * (cube[0] - x) + c * (cube[1] - y);
+    if (fx <= ZUMO.rear - h || fx >= ZUMO.front + h || Math.abs(fy) >= ZUMO.halfWidth + h) continue;
+    if (fx >= ZUMO.front) fx = ZUMO.front + h;
+    else if (fx <= ZUMO.rear) fx = ZUMO.rear - h;
+    else fy = Math.sign(fy || 1) * (ZUMO.halfWidth + h);
+    moved.push([cube, cube[0], cube[1]]);
+    cube[0] = x + c * fx - s * fy;
+    cube[1] = y + s * fx + c * fy;
+  }
+  return moved;
 }
 
 /** Passive inspector estimate for programs that do not publish their own map.
@@ -128,6 +155,9 @@ export class SensorMapper {
       const mid = this.pose[2] + turn / 2;
       this.pose = [this.pose[0] + ds * Math.cos(mid), this.pose[1] + ds * Math.sin(mid), wrap(this.pose[2] + turn)];
       this.distance += Math.abs(ds);
+      const pushed = pushCubes(this.cubes, this.pose);
+      for (const [cube, ox, oy] of pushed) this.vacate(ox, oy, cube);
+      if (pushed.length) this.grid = this.published();
     }
     this.last = { t, enc, gyro };
   }
@@ -163,13 +193,20 @@ export class SensorMapper {
       const forward = VL53L5CX.mount[0] + column.depth, lateral = column.depth * column.tan;
       rays.push([ox, oy, x + c * forward - s * lateral, y + s * forward + c * lateral]);
     }
-    // Beams that pass through a known cube remove it (pushed away); then this frame's sightings.
+    // Beams that pass through a known cube remove it (pushed away), unless this frame also hits it
+    // (a pushed cube slides along the blade, its estimate can be off by a few cm); then the sightings.
     for (const cube of [...this.cubes]) {
-      if (!rays.some((r) => seenThrough(cube, r))) continue;
+      if (!rays.some((r) => seenThrough(cube, r)) || rays.some(([, , ex, ey]) => Math.hypot(ex - cube[0], ey - cube[1]) < CUBE)) continue;
       cube[2] = Math.min(cube[2], CUBE_MEMORY) - 1;
       if (cube[2] <= 0) this.cubes.splice(this.cubes.indexOf(cube), 1);
     }
-    for (const g of sightings) addCube(this.cubes, x + c * g.x - s * g.y, y + s * g.x + c * g.y);
+    const zone = 2 * Math.tan(VL53L5CX.fovDeg * Math.PI / 360) / size;
+    for (const g of sightings) {
+      const before = this.cubes.map((k) => [k, k[0], k[1]] as const);
+      const cube = addCube(this.cubes, x + c * g.x - s * g.y, y + s * g.x + c * g.y, columns[g.first]!.depth * zone / 2);
+      const old = before.find(([k]) => k === cube);
+      if (old) this.vacate(old[1], old[2], cube);
+    }
     const hits = new Set<number>();
     // Free evidence before all endpoints, so crossing beams preserve this scan's hits.
     for (const [ox, oy, ex, ey] of rays) {
@@ -222,6 +259,18 @@ export class SensorMapper {
       }
     }
     return grid.join("");
+  }
+
+  /** A known cube left (ox, oy): its old hits there are stale. Cells it still covers stay. */
+  private vacate(ox: number, oy: number, cube: CubeEstimate) {
+    const half = this.size * this.cell / 2, reach = CUBE / 2 + this.cell;
+    for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
+      const index = this.index(ox + dx * this.cell, oy + dy * this.cell);
+      if (index === null || this.cells[index] <= 0) continue;
+      const cx = -half + (index % this.size + 0.5) * this.cell, cy = half - (Math.floor(index / this.size) + 0.5) * this.cell;
+      const near = (x: number, y: number) => Math.abs(cx - x) < reach && Math.abs(cy - y) < reach;
+      if (near(ox, oy) && !near(cube[0], cube[1])) this.cells[index] = 0;
+    }
   }
 
   private mark(index: number, delta: number) {

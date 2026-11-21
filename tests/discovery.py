@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src/robot/python'))
-from spark_mapping import Odometry, DiscoveryMap, cube_sightings, CUBE
+from spark_mapping import Odometry, DiscoveryMap, cube_sightings, push_cubes, CUBE, ROBOT_FRONT
 
 
 def frame(depth=400, sequence=1):
@@ -224,6 +224,45 @@ class MappingTests(unittest.TestCase):
         for seq in range(3, 10):
             m.observe(cube_frame(cube_cols=(), sequence=seq), seq * 100000)
         self.assertEqual(m.cubes, [])
+
+    def test_pushed_cube_moves_with_the_robot(self):
+        # Robot drives 10 cm into a cube 12 cm ahead: the cube ends up in front of the blade.
+        cubes = [[0.12, 0.01, 5], [0.12, 0.3, 5]]
+        for step in range(1, 11):
+            push_cubes(cubes, (step * 0.01, 0, 0))
+        self.assertAlmostEqual(cubes[0][0], 0.1 + ROBOT_FRONT + CUBE / 2)
+        self.assertAlmostEqual(cubes[0][1], 0.01)
+        self.assertEqual(cubes[1][:2], [0.12, 0.3], 'a cube beside the path stays')
+        # Driving past a cube that overlaps the side shoves it sideways, not forward.
+        side = [[0.0, 0.07, 5]]
+        push_cubes(side, (0, 0, 0))
+        self.assertAlmostEqual(side[0][1], 0.0495 + CUBE / 2)
+
+    def test_map_follows_a_pushed_cube_and_clears_its_old_cells(self):
+        odom = Odometry()
+        m = DiscoveryMap(odom, match=False)
+        for seq in (1, 2):
+            m.observe(cube_frame(sequence=seq), seq * 100000)
+        (x, _), = m.known_cubes()
+        old = m._cell(0.452, 0.02)
+        self.assertGreater(m.cells[old], 0)
+        # Too close to see; the robot drives on until its blade has pushed the cube 10 cm.
+        start = x - CUBE / 2 - ROBOT_FRONT
+        for step in range(1, 11):
+            odom.x = start + step * 0.01
+            (nx, ny), = m.known_cubes()
+        self.assertAlmostEqual(nx, x + 0.1)
+        self.assertEqual(m.cells[old], 0, 'the cube is gone from its old spot')
+        self.assertEqual(m.packet(300000, 'push')['cubes'][0][:2], [round(nx, 4), round(ny, 4)])
+
+    def test_moved_cube_jumps_to_new_sightings(self):
+        m = DiscoveryMap(Odometry(), match=False)
+        for seq in range(1, 9):
+            m.observe(cube_frame(sequence=seq), seq * 100000)
+        # Shifted one zone to the left (~4 cm at 40 cm; raw column 0 is right): one sighting is enough.
+        m.observe(cube_frame(cube_cols=(4, 5), sequence=9), 900000)
+        (_, y), = m.known_cubes()
+        self.assertGreater(y, 0.035)
 
 
 class MapQueryTests(unittest.TestCase):

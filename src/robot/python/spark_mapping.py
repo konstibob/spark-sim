@@ -6,8 +6,10 @@ Prior knowledge from the rules is allowed: every cube is 6 x 6 x 6 cm and
 stands free, walls are long and 10 cm high. Cubes are kept as centre estimates
 (DiscoveryMap.cubes, known_cubes()). The grid keeps raw hits for scan
 matching; the published map hides the wider smear around a known cube, which
-the view draws at its real size instead. Cubes within the robot's reach may
-be pushed and stay out of scan matching.
+the view draws at its real size instead. Cubes may be pushed, so scan matching
+uses only the other hits (walls). A known cube the robot's footprint runs into
+moves with the robot (it is pushed), so the map follows it even while it is
+too close to see; a sighting clearly off the estimate moves it at once.
 Copy alongside spark_tof.py to the robot. Units: metres, radians, microseconds.
 The start pose is an assumption: (0, 0, 0), +x in the starting direction.
 """
@@ -110,7 +112,13 @@ CUBE_GAP = 0.05     # neighbour columns must be this much farther (or empty): a 
 CUBE_JOIN = 0.09    # a sighting this close to a known cube is the same cube
 CUBE_MEMORY = 8     # averaging weight cap, so a pushed cube can follow its new sightings
 CUBE_MAX = 16       # five cubes in the arena; room for a few stray sightings on top
-CUBE_STILL = 0.2    # farther than this from the robot a cube was not pushed: fine for scan matching
+CUBE_SHIFT = 0.015  # a sighting this much farther off than its zone width explains: the cube moved
+# Closer than this to the sensor the cube's 6 cm top is below the 45 deg view (9 cm mount): beams pass over it.
+CUBE_BLIND = (0.09 - CUBE) / math.tan(math.pi / 8) + 0.01
+# Zumo 2040 footprint from the STEP model, robot frame: front of the blade, rear, half width.
+ROBOT_FRONT = 0.0589
+ROBOT_REAR = -0.0373
+ROBOT_HALF_WIDTH = 0.0495
 
 
 def cube_sightings(columns, mount_x, fov=math.pi / 4):
@@ -165,10 +173,36 @@ def seen_through(cube, ray):
     if length == 0:
         return False
     along = ((cube[0] - ox) * dx + (cube[1] - oy) * dy) / length
-    if along < 0 or along > length - CUBE:
+    # Right in front of the sensor the beams pass over the cube: no evidence either way.
+    if along - CUBE / 2 < CUBE_BLIND or along > length - CUBE:
         return False
     # Within half a cube of the centre the bright cube would have filled that zone.
     return abs((cube[0] - ox) * dy - (cube[1] - oy) * dx) / length < CUBE / 2
+
+
+def push_cubes(cubes, pose):
+    """The robot's footprint pushes every known cube it overlaps: a cube ahead
+    of the blade forward, one behind the rear backwards, one beside the body
+    sideways. Map frame. Returns [(cube, old_x, old_y), ...] for moved cubes."""
+    x, y, heading = pose
+    c, s = math.cos(heading), math.sin(heading)
+    h = CUBE / 2
+    moved = []
+    for cube in cubes:
+        fx = c * (cube[0] - x) + s * (cube[1] - y)
+        fy = -s * (cube[0] - x) + c * (cube[1] - y)
+        if fx <= ROBOT_REAR - h or fx >= ROBOT_FRONT + h or abs(fy) >= ROBOT_HALF_WIDTH + h:
+            continue
+        if fx >= ROBOT_FRONT:
+            fx = ROBOT_FRONT + h
+        elif fx <= ROBOT_REAR:
+            fx = ROBOT_REAR - h
+        else:
+            fy = ROBOT_HALF_WIDTH + h if fy >= 0 else -(ROBOT_HALF_WIDTH + h)
+        moved.append((cube, cube[0], cube[1]))
+        cube[0] = x + c * fx - s * fy
+        cube[1] = y + s * fx + c * fy
+    return moved
 
 
 class DiscoveryMap:
@@ -354,6 +388,7 @@ class DiscoveryMap:
                 used.append(col)
         on_sighting = [any(g[2] <= col <= g[3] for g in sightings) for col in used]
         pose = self.corrected(odom)
+        self._push(pose)
         # How far odometry may be off since the previous scan: grows with the
         # travelled distance and the turned angle (slip, gyro scale error).
         last = self._last_odom or odom
@@ -361,20 +396,19 @@ class DiscoveryMap:
         turned = abs(_wrap(odom[2] - last[2]))
         self._last_odom = odom
         sigma = (0.004 + 0.1 * moved + 0.01 * turned, 0.01 + 0.3 * turned + 0.5 * moved)
-        # Match only what cannot have moved: hits on a cube within the robot's
-        # reach (sighted now or known from earlier) stay out of scan matching.
+        # Match only what cannot have moved: walls. Hits on a cube (sighted now
+        # or known from earlier) stay out of scan matching: cubes get pushed, and
+        # their sightings shift with distance, which slid the pose along the way.
         zone = 2 * math.tan(math.pi / 8) / size
         cs, sn = math.cos(pose[2]), math.sin(pose[2])
-        near = [c for c in self.cubes if c[2] >= 2
-                and (c[0] - pose[0]) ** 2 + (c[1] - pose[1]) ** 2 < CUBE_STILL ** 2]
         static = []
         for k in range(len(local)):
             lx, ly = local[k]
-            if on_sighting[k] and lx * lx + ly * ly < CUBE_STILL ** 2:
+            if on_sighting[k]:
                 continue
             ex, ey = pose[0] + cs * lx - sn * ly, pose[1] + sn * lx + cs * ly
             reach = on_cube(columns[used[k]][0], zone) + 0.02  # odometry may be off before matching
-            if not any((c[0] - ex) ** 2 + (c[1] - ey) ** 2 < reach * reach for c in near):
+            if not any((c[0] - ex) ** 2 + (c[1] - ey) ** 2 < reach * reach for c in self.cubes):
                 static.append(local[k])
         if self.match and static and self.confident >= self.MATCH_MIN_CELLS:
             matched = self._match(static, pose, sigma)
@@ -393,7 +427,7 @@ class DiscoveryMap:
         for lx, ly in local:
             ex, ey = px + cs * lx - sn * ly, py + sn * lx + cs * ly
             rays.append([round(ox, 4), round(oy, 4), round(ex, 4), round(ey, 4)])
-        self._update_cubes(rays, sightings, pose)
+        self._update_cubes(rays, sightings, pose, [columns[g[2]][0] * zone / 2 for g in sightings])
         # Carve free evidence first, then all endpoints: one beam must not erase
         # another beam's hit in the same frame. Endpoint cells are excluded.
         hits = []
@@ -582,16 +616,38 @@ class DiscoveryMap:
         self.correction = (0.0, 0.0, 0.0)
         self._last_odom = None
 
-    def _update_cubes(self, rays, sightings, pose):
-        # Beams through a known cube weaken it (pushed away); then this frame's sightings.
+    def _push(self, pose):
+        for cube, ox, oy in push_cubes(self.cubes, pose):
+            self._vacate(ox, oy, cube)
+            self._dirty = True
+
+    def _vacate(self, ox, oy, cube):
+        """A known cube left (ox, oy): its old hits there are stale. Cells it still covers stay."""
+        half = self.SIZE * self.CELL / 2
+        reach = CUBE / 2 + self.CELL
+        for dx in (-2, -1, 0, 1, 2):
+            for dy in (-2, -1, 0, 1, 2):
+                index = self._cell(ox + dx * self.CELL, oy + dy * self.CELL)
+                if index is None or self.cells[index] <= 0:
+                    continue
+                cx = -half + (index % self.SIZE + 0.5) * self.CELL
+                cy = half - (index // self.SIZE + 0.5) * self.CELL
+                if (abs(cx - ox) < reach and abs(cy - oy) < reach
+                        and not (abs(cx - cube[0]) < reach and abs(cy - cube[1]) < reach)):
+                    self._mark(index, -self.cells[index])
+
+    def _update_cubes(self, rays, sightings, pose, slack):
+        # Beams through a known cube weaken it (pushed away), unless this frame also hits it
+        # (a pushed cube slides along the blade, its estimate can be off by a few cm); then the sightings.
         for cube in list(self.cubes):
-            if any(seen_through(cube, r) for r in rays):
+            if (any(seen_through(cube, r) for r in rays)
+                    and not any((r[2] - cube[0]) ** 2 + (r[3] - cube[1]) ** 2 < CUBE * CUBE for r in rays)):
                 cube[2] = min(cube[2], CUBE_MEMORY) - 1
                 if cube[2] <= 0:
                     self.cubes.remove(cube)
         px, py, heading = pose
         cs, sn = math.cos(heading), math.sin(heading)
-        for lx, ly, _, _ in sightings:
+        for k, (lx, ly, _, _) in enumerate(sightings):
             x, y = px + cs * lx - sn * ly, py + sn * lx + cs * ly
             best, gap = None, CUBE_JOIN
             for cube in self.cubes:
@@ -605,10 +661,13 @@ class DiscoveryMap:
                 best = [x, y, 1]
                 self.cubes.append(best)
             else:
-                w = min(best[2], CUBE_MEMORY)
+                # Farther off than the zone width explains: moved, jump instead of averaging.
+                w = 0 if gap > CUBE_SHIFT + slack[k] else min(best[2], CUBE_MEMORY)
+                ox, oy = best[0], best[1]
                 best[0] = (best[0] * w + x) / (w + 1)
                 best[1] = (best[1] * w + y) / (w + 1)
                 best[2] += 1
+                self._vacate(ox, oy, best)
 
     def _grid_bytes(self):
         """Published map: obstacle cells around a known cube are that cube seen
@@ -639,9 +698,11 @@ class DiscoveryMap:
 
     def known_cubes(self):
         """Confirmed cubes, map frame: [(x, y), ...]. Use for planning."""
+        self._push(self.estimate())
         return [(c[0], c[1]) for c in self.cubes if c[2] >= 2]
 
     def packet(self, now_us, state, grid=True):
+        self._push(self.estimate())
         p = self.pose
         x, y, h = self.estimate()
         packet = {

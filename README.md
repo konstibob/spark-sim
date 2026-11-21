@@ -220,7 +220,7 @@ node deploy/serve-practice.mjs        # serves ./dist-practice on http://localho
   holds the sensor loop and motion primitives (scan, turn, drive, route around obstacles, referee-lift handling),
   `spark_mapping.py` the map queries (`hits()`, `obstacles()`, `frontiers()`, `path_clear()`, `forget()`).
   **Nächster Würfel → Mitte** pushes cubes home in steps and uses the tape edges as landmarks for the last push
-  (32 seeded layouts: mean 2.5 points, 1–5; assumptions: cube friction, ToF reflectance). **Vorlage** is the
+  (32 seeded layouts: mean 2.8 points, 0–5; assumptions: cube friction, ToF reflectance). **Vorlage** is the
   starting point for new strategies. `npm run runs -- src/algorithms/<file>.py`, `npm run test:algorithms`.
 - **Test bench:** many headless matches in parallel → win rate with a confidence interval; watch any match again.
 - **Debugging:** a timeline to scrub every frame, telemetry strip charts, a plotter for your `print`s, a 3D

@@ -1,7 +1,7 @@
 # Name: Nächster Würfel → Mitte
 # Strategy: Scan 360° with the ToF, take the nearest cube from the discovery map, drive behind it on the line
 #   through the start square and push it in. The first cube goes to the centre (3 points), later ones stop
-#   inside the 30 cm square (1 point). Cubes near a wall are first pushed sideways into open floor.
+#   completely inside the 30 cm square (1 point). Cubes near a wall are first pushed sideways into open floor.
 # Strengths / weaknesses: Uses only the robot's own map (hits(), path_clear(), route()) plus the published
 #   arena size; the tape edges correct the last push. No pull: cubes touching a wall or in a corner are
 #   skipped. Only the first cube aims for 3 points.
@@ -32,7 +32,7 @@ SMALL_EDGE = 0.085     # outer tape edge of the 12 cm square, from the centre
 HOME_EDGE = 0.175      # outer tape edge of the 30 cm square
 GAP = 0.08             # blade to cube before each push
 BEHIND = CUBE_HALF + FRONT + GAP   # robot origin behind the cube centre before a push
-SIDE_GOAL = 0.13       # later cubes: centre this far from the middle (inside the 1-point square)
+SIDE_GOAL = 0.10       # later cubes: centre this far from the middle (completely inside the 1-point square)
 SEGMENT = 0.18         # long pushes in steps of this much cube travel, looking again between them
 FINAL = 0.32           # closer than this to the centre: the last push, guided by the tape edges
 LAST_SECONDS = 10      # no new push this close to 120 s
@@ -70,8 +70,8 @@ def inside(x, y, margin):
 
 
 def in_home(x, y):
-    """Centre inside the 30 cm square (+ tape) with 1 cm to spare: at least half of it counts."""
-    return abs(x) < HOME_HALF - 0.01 and abs(y) < HOME_HALF - 0.01
+    """Whole cube inside the 30 cm square (+ tape), 1 cm to spare: only then it counts."""
+    return abs(x) < HOME_HALF - CUBE_HALF - 0.01 and abs(y) < HOME_HALF - CUBE_HALF - 0.01
 
 
 def measure(cx, cy):
@@ -169,10 +169,13 @@ def push_home(ux, uy, small):
 
     stop = CUBE_HALF + FRONT + (0 if small else SIDE_GOAL * k)  # robot origin before the centre at the goal
     pilot.drive_to(-ux * stop, -uy * stop, speed=2400, timeout=8, until=tape, line=True)
-    if small and seen['edge'] == SMALL_EDGE:
-        # Sensors on the small square's edge: a few cm more puts the cube in the middle.
-        pilot.drive(SMALL_EDGE * k + SENSOR - stop, speed=2000)
-    return seen['edge']
+    edge = seen['edge']
+    if edge == SMALL_EDGE or edge == HOME_EDGE and not small:
+        # Sensors on the tape edge: the last few cm by encoder put the cube on its goal.
+        rest = edge * k + SENSOR - stop
+        if rest > 0.005:
+            pilot.drive(rest, speed=2000)
+    return edge
 
 
 def deliver(cx, cy):

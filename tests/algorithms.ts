@@ -12,7 +12,7 @@ import { runMatch } from "./match.ts";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "../src/algorithms");
 // Points on DEFAULT_CUBES, seed 7, measured when the algorithm was added. A drop is a regression.
-const MIN_POINTS: Record<string, number> = { "nearest_cube.py": 3 };
+const MIN_POINTS: Record<string, number> = { "nearest_cube.py": 3, "tof_map_push.py": 5 };
 
 for (const file of readdirSync(dir).filter((f) => f.endsWith(".py")).sort()) {
   const code = readFileSync(join(dir, file), "utf8");

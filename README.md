@@ -143,7 +143,11 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   reports average scores; each result can be replayed.
 - Referee actions are in the map's **Modell & Schiedsrichter** section: first rescue −1,
   second rescue ends the round, touching −1 and ends the round. Leaving the arena costs −2
-  and ends it. Judge the 10 seconds stuck yourself. Early motor commands produce a warning;
+  and ends it. **Stuck is judged automatically:** if the robot stays within 3 cm and turns less
+  than 30° for 5 s the console warns; at 10 s the referee frees it (−1 point, set down on the nearest
+  clear spot towards the centre, facing the centre); stuck a second time ends the round. The rules
+  page does not define "stuck" or where a freed robot goes, so these are our assumptions
+  (`STUCK_*` in `src/world/rules.ts`, `World.free` in `src/world/world.ts`). Early motor commands produce a warning;
   official first-false-start restarts and second-false-start disqualification are manual.
 
 Measured: **2.5 cm tape width**, heavy cubes **140 g**, light cubes **40 g**. Every match draws from its

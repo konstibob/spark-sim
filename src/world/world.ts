@@ -361,6 +361,7 @@ export class World {
     this.lastJudgeUs = this.tUs;
     if (!this.judging) return;
     const xpos = this.d.xpos;
+    const xmat = this.d.xmat;
     const views = this.robots.map((r) => ({
       x: xpos[r.body * 3],
       y: xpos[r.body * 3 + 1],
@@ -369,9 +370,42 @@ export class World {
       moving: r.cmd[0] !== 0 || r.cmd[1] !== 0,
       name: r.name,
       green: r.green,
+      yaw: Math.atan2(xmat[r.body * 9 + 3], xmat[r.body * 9]),
     }));
     const t = this.tUs / 1e6;
     for (const e of this.rules.step(t, dt, views, this.cubeViews())) this.events.push({ ...e, t });
+    const free = this.rules.takeFree();
+    if (free !== null) this.free(free);
+  }
+
+  /**
+   * The referee frees a stuck robot: lifts it and sets it down on the nearest clear spot towards the arena centre,
+   * facing the centre. The rules page does not say where; this is our assumption.
+   */
+  free(slot: number) {
+    const r = this.robots[slot];
+    if (!r) return;
+    const x = this.d.xpos[r.body * 3];
+    const y = this.d.xpos[r.body * 3 + 1];
+    const e = this.arena.extent;
+    const cubes = this.cubeViews();
+    const clear = (px: number, py: number) =>
+      px > e.x0 + 0.08 && px < e.x1 - 0.08 && py > e.y0 + 0.08 && py < e.y1 - 0.08 &&
+      cubes.every((c) => Math.hypot(c.pos[0] - px, c.pos[1] - py) > 0.11);
+    const dist = Math.hypot(x, y);
+    const toCentre = dist > 0.02 ? Math.atan2(-y, -x) : Math.atan2(this.d.xmat[r.body * 9 + 3], this.d.xmat[r.body * 9]) + Math.PI;
+    let spot: [number, number] | null = null;
+    for (let d = 0.1; d <= Math.max(0.1, dist) && !spot; d += 0.05) {
+      const px = x + Math.cos(toCentre) * d;
+      const py = y + Math.sin(toCentre) * d;
+      if (clear(px, py)) spot = [px, py];
+    }
+    for (let k = 0; k < 16 && !spot; k++) {
+      const a = toCentre + (k * Math.PI) / 8;
+      if (clear(x + Math.cos(a) * 0.15, y + Math.sin(a) * 0.15)) spot = [x + Math.cos(a) * 0.15, y + Math.sin(a) * 0.15];
+    }
+    const [px, py] = spot ?? [x, y];
+    this.place(slot, { x: px, y: py, yaw: Math.atan2(-py, -px) });
   }
 
   private pressButtons() {

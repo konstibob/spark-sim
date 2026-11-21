@@ -50,6 +50,9 @@ npx tsx tests/match.ts src/examples/challenge2_template.py --arena push-pull --p
 npx tsx tests/match.ts prog.py --arena push-pull --press A@0.2 --seconds 121 --cube-seed 42   # seeded layout
 npx tsx tests/match.ts prog.py --arena push-pull --press A@0.2 --seconds 121 --map layout.json # Arena-Karte export
 SPARK_TRACE=1 npx tsx tests/match.ts ...                                                      # positions + sensors per second
+# Many runs in parallel + score histogram (same seeds as the app's Runs grid):
+npm run runs -- prog.py --runs 16 --base-seed 1            # each run its own cube layout
+npm run runs -- prog.py --runs 50 --map layout.json        # one fixed layout, seeds vary the noise
 ```
 
 Run `npm test` and `npm run typecheck` before you say a change works.

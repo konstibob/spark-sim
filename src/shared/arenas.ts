@@ -23,6 +23,8 @@ export interface Arena {
   extent: { x0: number; y0: number; x1: number; y1: number };
   /** IR reflectance at 940 nm of the printed surface (0 absorbs everything, 0.9 = white melamine) */
   reflect(x: number, y: number): number;
+  /** line sensors: how much brighter this surface looks to them than `reflect` says (measured per arena; default 1) */
+  lineBrightness?: number;
   /** Visible colour of the surface (sRGB 0..255) */
   color(x: number, y: number): [number, number, number];
   /** MJCF collision geometry of the arena (the floor plane is added separately) */
@@ -228,6 +230,8 @@ registerArena("push-pull", () => {
     surfaceZ: z,
     extent: { x0: -0.8, y0: -0.8, x1: 0.8, y1: 0.8 },
     reflect: (x, y) => onTape(x, y) ? R_BLACK : R_WHITE,
+    // measured (stock Zumo, MEASURED_LINE): floor ≈ 41, tape ≈ 850 raw; ZUMO.lineWhite assumes 110 on melamine
+    lineBrightness: 2.68,
     color: (x, y) => onTape(x, y) ? BLACK : WHITE,
     mjcf: () => slabMjcf(P.size, P.size, z) + [-1, 1].flatMap((s) => [
       `<geom name="wall_x${s}" type="box" size="${P.wallThickness / 2} ${P.size / 2 + P.wallThickness} ${P.wallHeight / 2}" pos="${s * (P.size / 2 + P.wallThickness / 2)} 0 ${z + P.wallHeight / 2}" group="0"/>`,

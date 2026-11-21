@@ -17,6 +17,8 @@ assert.equal(decoded[1], "hello");
 assert.equal(parseDiscovery('@spark-map {"v":1}'), null);
 assert.equal(parseDiscovery("@spark-map " + JSON.stringify({ ...packet, grid: "bad" })), null);
 assert.equal(parseDiscovery("@spark-map " + JSON.stringify({ ...packet, scan_t: 5 })), null);
+assert.deepEqual(parseDiscovery("@spark-map " + JSON.stringify({ ...packet, cubes: [[0.4, 0.1, 3]] }))!.cubes, [[0.4, 0.1, 3]]);
+assert.equal(parseDiscovery("@spark-map " + JSON.stringify({ ...packet, cubes: [[0.4, 0.1]] })), null);
 
 const recorder = new Recorder();
 recorder.addDiscovery(0, packet);
@@ -66,5 +68,8 @@ const [error, angleError] = errors(last.pose);
 const [odomError, odomAngleError] = errors(last.odom!);
 assert(error < 0.06, `short-run position estimate error ${error} m`);
 assert(angleError < 0.1, `short-run heading error ${angleError} rad (including telemetry age)`);
+// Default layout: cube 1 stands 43 cm straight ahead of the start, in the robot's view the whole time.
+const cube = last.cubes!.find((c) => c[2] >= 2 && Math.hypot(c[0] - 0.43, c[1]) < 0.05);
+assert(cube, `the cube ahead is known at its size and place (${JSON.stringify(last.cubes)})`);
 const fmt = (e: number, a: number) => `${(e * 100).toFixed(1)} cm / ${(a * 180 / Math.PI).toFixed(1)}°`;
 console.log(`ok   MicroPython discovery: ${packets.length} packets, ${last.scans} scans (${last.matched} matched), ${last.distance} m travel, final error SLAM ${fmt(error, angleError)} · odometry ${fmt(odomError, odomAngleError)}`);

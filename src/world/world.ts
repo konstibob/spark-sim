@@ -4,13 +4,14 @@
 import type { Arena, Pose } from "../shared/arenas.ts";
 import { C, NOMINAL, OP, ST, type RobotChannel, type RobotSnapshot, type WorldEvent, type WorldSnapshot, type WorldTweaks } from "../shared/protocol.ts";
 import { COST_US, ZUMO } from "../shared/zumo-spec.ts";
-import { buildMjcf, DRIVEN } from "./mjcf.ts";
+import { buildMjcf, CAL_CUBE, CAL_CUBE_PARK, DRIVEN } from "./mjcf.ts";
 import { Rules } from "./rules.ts";
 import { ToFSensor } from "./vl53l5cx.ts";
 import { VL53L5CX } from "../shared/vl53l5cx.ts";
 import { ToFSerialBridge } from "./tof-serial.ts";
 import { SensorMapper } from "../shared/sensor-mapping.ts";
-import { cubeMasses, type CubeView, PUSH_PULL, validCubeLayout } from "../shared/push-pull.ts";
+import { calibrationPlan, calibrationPoses, CAL_STILL_CHECK_S, validCalibration, type CalibrationSetup } from "../shared/calibration.ts";
+import { cubeMasses, type CubeView, PROX_RESPONSE, proxResponse, PUSH_PULL, validCubeLayout } from "../shared/push-pull.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Mujoco = any;
@@ -25,6 +26,8 @@ const RULES_EVERY = 5; // physics steps between rule evaluations
 const LIFT_US = 1_000_000;
 const LIFT_M = 0.04;
 const SETTLE_STEPS = 150; // physics steps before t = 0 to let the robots come to rest
+/** brightness levels per ProximitySensors.read(); the crew's fine setting uses 30 */
+const MAX_PROX_LEVELS = 32;
 /** proximity: ray directions of one receiver's fan, relative to its axis (degrees) */
 const PROX_KS: number[] = [];
 for (let k = -ZUMO.proxFov; k <= ZUMO.proxFov + 1e-9; k += ZUMO.proxRayStep) PROX_KS.push(k);
@@ -138,6 +141,14 @@ export interface WorldOptions {
   tweaks?: WorldTweaks;
   tof?: boolean[];
   cubes?: Pose[];
+  /** Push & Pull: play the crew's three calibration windows before the start (null = skip, the default) */
+  calibration?: CalibrationSetup | null;
+}
+
+/** One step of the crew's calibration procedure at sim time `at` (µs) */
+interface CrewStep {
+  at: number;
+  run: () => void;
 }
 
 export class World {
@@ -168,6 +179,10 @@ export class World {
   private presses: { idx: number; at: number }[];
   /** live presses from the UI start signal: written to the robots' channels until `until` */
   private livePresses: { idx: number; until: number }[] = [];
+  /** Push & Pull calibration: the setup, the crew's remaining steps once it has begun (null = not yet) */
+  readonly calibration: CalibrationSetup | null;
+  private crew: CrewStep[] | null = null;
+  private calCube = -1;
   readonly tweaks: WorldTweaks;
   private static fileCounter = 0;
 
@@ -191,7 +206,8 @@ export class World {
     if (cubes.length) this.cubeMass.push(...cubeMasses(seed));
     // Push & Pull: the team's Zumo carries an extra board
     const ballastKg = cubes.length ? PUSH_PULL.robotExtra : 0;
-    const xml = buildMjcf(arena, poses, poses.map((_, i) => ({ grip: this.tweaks.grip, ballastKg, ...blade(i) })), cubes, this.cubeMass);
+    this.calibration = arena.mode === "push-pull" && validCalibration(opt.calibration) ? { ...opt.calibration } : null;
+    const xml = buildMjcf(arena, poses, poses.map((_, i) => ({ grip: this.tweaks.grip, ballastKg, ...blade(i) })), cubes, this.cubeMass, !!this.calibration);
     if (cubes.length) this.events.push({ kind: "info", t: 0, text: `Cubes: ${this.cubeMass.map((m, i) => `${i + 1} = ${Math.round(m * 1000)} g`).join(" · ")}` });
     try {
       mj.FS.mkdir("/spark");
@@ -219,6 +235,7 @@ export class World {
     };
     const m = this.m;
     cubes.forEach((_, i) => this.cubeBodies.push(id("mjOBJ_BODY", `cube${i}`)));
+    if (this.calibration) this.calCube = id("mjOBJ_BODY", CAL_CUBE);
     this.arenaGeom = id("mjOBJ_GEOM", "arena");
     const floorGeom = id("mjOBJ_GEOM", "floor");
     this.geomKind = new Int8Array(m.ngeom);
@@ -244,7 +261,7 @@ export class World {
         gyroAdr: m.sensor_adr[id("mjOBJ_SENSOR", p + "gyro")],
         cmd: [0, 0],
         kMotor: [1 + rand.gauss(M.spread), 1 + rand.gauss(M.spread)],
-        lineGain: [0, 1, 2, 3, 4].map(() => 1 + rand.gauss(ZUMO.lineGainSpread)),
+        lineGain: [0, 1, 2, 3, 4].map(() => Math.max(0.5, 1 + rand.gauss(ZUMO.lineGainSpread))),
         gyroBias: [rand.gauss(ZUMO.imuNoise.gyroBias), rand.gauss(ZUMO.imuNoise.gyroBias), rand.gauss(ZUMO.imuNoise.gyroBias)],
         magOffset: [rand.gauss(0.05), rand.gauss(0.05), rand.gauss(0.05)],
         soc: Math.max(0, Math.min(1, this.tweaks.battery)),
@@ -281,7 +298,7 @@ export class World {
       this.geomRobot[g] = robot;
       if (g === this.arenaGeom) this.geomKind[g] = GEOM.arena;
       else if (g === floorGeom) this.geomKind[g] = GEOM.floor;
-      else if (this.cubeBodies.includes(m.geom_bodyid[g])) this.geomKind[g] = GEOM.cube;
+      else if (this.cubeBodies.includes(m.geom_bodyid[g]) || m.geom_bodyid[g] === this.calCube) this.geomKind[g] = GEOM.cube;
       else if (m.geom_group[g] === 2) this.geomKind[g] = GEOM.roller;
       else if (robot >= 0)
         this.geomKind[g] = g === id("mjOBJ_GEOM", `r${robot}_blade`) || g === id("mjOBJ_GEOM", `r${robot}_bladetip`) ? GEOM.blade : GEOM.hull;
@@ -419,11 +436,14 @@ export class World {
   }
 
   private pressButtons() {
-    if (this.arena.mode === "push-pull" && this.rules.state.signal === null && this.robots.some((r) => r.chan && Atomics.load(r.chan.ctl, C.BtnA))) this.startSignal();
-    // scheduled presses: robots see them from their own clock; here only the start signal is judged
-    if (this.rules.state.signal === null)
-      for (const p of this.presses)
-        if (p.idx === C.BtnA && this.tUs >= p.at) for (const e of this.rules.signal(p.at / 1e6)) this.events.push({ ...e, t: p.at / 1e6 });
+    if (this.calibration) this.runCrew();
+    else {
+      if (this.arena.mode === "push-pull" && this.rules.state.signal === null && this.robots.some((r) => r.chan && Atomics.load(r.chan.ctl, C.BtnA))) this.startSignal();
+      // scheduled presses: robots see them from their own clock; here only the start signal is judged
+      if (this.rules.state.signal === null)
+        for (const p of this.presses)
+          if (p.idx === C.BtnA && this.tUs >= p.at) for (const e of this.rules.signal(p.at / 1e6)) this.events.push({ ...e, t: p.at / 1e6 });
+    }
     // a live start signal from the UI: button A down on every robot for 100 ms of sim time
     if (this.livePresses.length) {
       for (const p of this.livePresses) {
@@ -437,12 +457,126 @@ export class World {
   /** The start signal now (UI): presses A on every robot like the referee's start, starts the 5 s countdown. */
   startSignal() {
     if (this.rules.state.signal !== null) return;
+    if (this.calibration) {
+      // with calibration, Start begins the crew's windows; the round's start signal follows after window 3
+      if (!this.crew) this.beginCrew(this.tUs, true);
+      return;
+    }
+    this.signalNow();
+  }
+
+  private signalNow() {
     const t = this.tUs / 1e6;
     for (const e of this.rules.signal(t)) this.events.push({ ...e, t });
+    this.pressLive();
+  }
+
+  /** button A on every robot for 100 ms; Push & Pull latches it until the program reads A */
+  private pressLive() {
     if (this.arena.mode === "push-pull") {
       for (const r of this.robots) if (r.chan) Atomics.store(r.chan.ctl, C.StartA, 1);
     }
     this.livePresses.push({ idx: C.BtnA, until: this.tUs + 100_000 });
+  }
+
+  // ------------------------------------------------------------------ calibration crew (Push & Pull)
+
+  /** Before the crew begins: the first scheduled A (auto start) or a live A begins it. Then its steps in time. */
+  private runCrew() {
+    if (!this.crew) {
+      if (this.rules.state.signal !== null) return;
+      const first = this.presses.filter((p) => p.idx === C.BtnA).sort((a, b) => a.at - b.at)[0];
+      if (first && this.tUs >= first.at) this.beginCrew(first.at, false);
+      else if (this.robots.some((r) => r.chan && Atomics.load(r.chan.ctl, C.BtnA))) this.beginCrew(this.tUs, true);
+      if (!this.crew) return;
+    }
+    while (this.crew.length && this.tUs >= this.crew[0].at) this.crew.shift()!.run();
+  }
+
+  /**
+   * The crew's procedure from t0 (µs). Scheduled (live = false): the robots' runtime presses A itself at the same
+   * times (calibrationPlan), here only placing and judging. Live (the UI's Start): the presses come from here.
+   */
+  private beginCrew(t0Us: number, live: boolean) {
+    const cal = this.calibration!;
+    const plan = calibrationPlan(t0Us / 1e6);
+    const poses = calibrationPoses(this.cubeViews().map((c) => ({ x: c.pos[0], y: c.pos[1], yaw: 0 })), cal);
+    const start = this.arena.starts[0];
+    const r = this.robots[0];
+    const us = (s: number) => Math.round(s * 1e6);
+    const say = (text: string, kind: "info" | "warn" = "info") => this.events.push({ kind, slot: 0, text, t: this.tUs / 1e6 });
+    const names = ["start square", `wall, scoop ${cal.wallCm} cm away`, `cube, scoop ${cal.cubeCm} cm away`];
+    const steps: CrewStep[] = [];
+    plan.presses.forEach((t, k) =>
+      steps.push({
+        at: us(t),
+        run: () => {
+          if (live) this.pressLive();
+          this.rules.calibrationWindow(k + 1, names[k]);
+          say(`Calibration window ${k + 1}/3 (${names[k]}): the crew presses A — 10 s`);
+        },
+      }),
+    );
+    plan.ends.forEach((t, k) =>
+      steps.push({
+        at: us(t + CAL_STILL_CHECK_S),
+        run: () => {
+          if (r && (r.cmd[0] !== 0 || r.cmd[1] !== 0)) say(`Calibration window ${k + 1}: the robot still drives after its 10 s (it must stand still when the window ends)`, "warn");
+        },
+      }),
+    );
+    const placeCube = (p: Pose) => this.setBodyPose(this.calCube, p, PUSH_PULL.cube / 2 + (p === CAL_CUBE_PARK ? 0 : this.arena.surfaceZ));
+    steps.push({ at: us(plan.places[0]), run: () => r && this.place(0, poses.wall) });
+    steps.push({
+      at: us(plan.places[1]),
+      run: () => {
+        placeCube(poses.cube);
+        if (r) this.place(0, poses.cubeRobot);
+      },
+    });
+    steps.push({
+      at: us(plan.places[2]),
+      run: () => {
+        placeCube(CAL_CUBE_PARK);
+        if (r) this.place(0, start);
+        this.rules.calibrationWindow(0, "");
+        say("Calibration done: the crew sets the robot in the start square");
+      },
+    });
+    steps.push({ at: us(plan.start), run: () => (live ? this.signalNow() : this.signalAt(plan.start)) });
+    steps.sort((a, b) => a.at - b.at);
+    this.crew = steps;
+  }
+
+  private signalAt(t: number) {
+    for (const e of this.rules.signal(t)) this.events.push({ ...e, t });
+  }
+
+  /** Put a free body (the calibration cube) at `pose`, `z` above the ground plane, at rest. */
+  private setBodyPose(body: number, pose: Pose, z: number) {
+    if (body < 0) return;
+    const jnt = this.m.body_jntadr[body];
+    const q = this.m.jnt_qposadr[jnt];
+    const v = this.m.jnt_dofadr[jnt];
+    const qpos = this.d.qpos;
+    qpos[q] = pose.x;
+    qpos[q + 1] = pose.y;
+    qpos[q + 2] = z + 0.0005;
+    qpos[q + 3] = Math.cos(pose.yaw / 2);
+    qpos[q + 4] = 0;
+    qpos[q + 5] = 0;
+    qpos[q + 6] = Math.sin(pose.yaw / 2);
+    for (let k = 0; k < 6; k++) this.d.qvel[v + k] = 0;
+    this.mj.mj_forward(this.m, this.d);
+  }
+
+  /** The calibration cube while it stands in the arena (window 3), for the views */
+  calCubeView(): CubeView | null {
+    if (this.calCube < 0) return null;
+    const b = this.calCube;
+    const pos: [number, number, number] = [this.d.xpos[b * 3], this.d.xpos[b * 3 + 1], this.d.xpos[b * 3 + 2]];
+    if (Math.abs(pos[1] - CAL_CUBE_PARK.y) < 0.1 && Math.abs(pos[0] - CAL_CUBE_PARK.x) < 0.1) return null;
+    return { pos, quat: [this.d.xquat[b * 4], this.d.xquat[b * 4 + 1], this.d.xquat[b * 4 + 2], this.d.xquat[b * 4 + 3]], mass: PUSH_PULL.heavy };
   }
 
   place(slot: number, pose: Pose) {
@@ -578,7 +712,7 @@ export class World {
           for (const [dx, dy, w] of SPOT) refl += w * this.arena.reflect(hx + dx, hy + dy);
         }
         const heightGain = Math.min(1, Math.max(0, 1 - (h - 0.003) / 0.007)); // EST: full up to 3 mm, nothing from 10 mm
-        light = refl * heightGain * r.lineGain[i];
+        light = refl * (this.arena.lineBrightness ?? 1) * heightGain * r.lineGain[i];
       }
       const v = (ZUMO.lineWhite * 0.9) / Math.max(light, 1e-3);
       out.push(Math.round(Math.min(T, Math.max(0, v * (1 + r.rand.gauss(0.03 * this.tweaks.noise))))));
@@ -601,6 +735,7 @@ export class World {
     const v = [0, 0, 0];
     const n = PROX_KS.length;
     const dirs = new Array<number>(n * 3);
+    const pushPullFit = this.arena.mode === "push-pull" && PROX_RESPONSE.knots.length > 0;
     return Z.proxSensors.map((s) => {
       const o = this.toWorld(r, s.pos[0], s.pos[1], Z.proxSensorZ);
       const sig = [0, 0];
@@ -620,7 +755,10 @@ export class World {
         const d = dists[j];
         if (d < 0 || d > Z.proxMaxDist) continue;
         const h = [o[0] + dirs[j * 3] * d, o[1] + dirs[j * 3 + 1] * d, o[2] + dirs[j * 3 + 2] * d];
-        const refl = this.reflectivity(geoms[j], h, norms.slice(j * 3, j * 3 + 3));
+        // Push & Pull walls and cubes: the response measured in that arena instead of reflectance × 1/d²
+        const kind = this.geomKind[geoms[j]];
+        const fitted = pushPullFit && (kind === GEOM.world || kind === GEOM.cube);
+        const refl = fitted ? this.proxThreshold * proxResponse(kind === GEOM.cube ? "cube" : "wall", d) : this.reflectivity(geoms[j], h, norms.slice(j * 3, j * 3 + 3));
         if (refl <= 0) continue;
         const recv = Math.cos(PROX_KS[j] * DEG) * refl;
         for (let g = 0; g < 2; g++) {
@@ -632,7 +770,7 @@ export class World {
             const d2 = dx * dx + dy * dy + dz * dz + 1e-4;
             const cosA = (dx * led.a[0] + dy * led.a[1] + dz * led.a[2]) / Math.sqrt(d2);
             const ang = Math.acos(Math.max(-1, Math.min(1, cosA))) / DEG;
-            e += Math.exp(-0.6931 * (ang / led.half) ** 2) / d2;
+            e += Math.exp(-0.6931 * (ang / led.half) ** 2) / (fitted ? 1 : d2);
           }
           sig[g] += e * recv;
         }
@@ -787,7 +925,7 @@ export class World {
         if (!r.deferred) {
           const on = f64[2] > 0 ? f64[2] : 250;
           const off = f64[3] > 0 ? f64[3] : 321;
-          const n = Math.max(0, Math.min(8, Math.round(f64[4])));
+          const n = Math.max(0, Math.min(MAX_PROX_LEVELS, Math.round(f64[4])));
           const levels: number[] = [];
           for (let i = 0; i < n; i++) levels.push(f64[5 + i]);
           const total = 2 * n * (on + off) + COST_US.proxOverhead;
@@ -992,6 +1130,6 @@ export class World {
         discovery: r.tof.enabled ? r.discovery?.packet() : undefined,
       };
     });
-    return { t: this.tUs / 1e6, realtime, robots, match: structuredClone(this.rules.state), cubes: this.cubeViews() };
+    return { t: this.tUs / 1e6, realtime, robots, match: structuredClone(this.rules.state), cubes: this.cubeViews(), calCube: this.calCubeView() };
   }
 }

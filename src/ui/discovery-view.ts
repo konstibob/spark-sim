@@ -10,6 +10,8 @@ const FOV = Math.PI / 4;
 const CONE = 0.45;
 /** smallest map window, metres: a fresh map still shows the robot large enough */
 const MIN_SPAN = 0.8;
+/** Known cube size from the rules: the robot draws what it believes, at true scale */
+const CUBE = 0.06;
 
 const turned = (a: number) => Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
 
@@ -45,8 +47,10 @@ export class DiscoveryView {
       pose.textContent = "x —   y —   θ —";
     } else {
       const slam = packet.matched === undefined ? "" : ` · SLAM ${packet.matched}/${packet.scans} korrigiert`;
+      const known = packet.cubes?.filter((c) => c[2] >= 2).length ?? 0;
+      const cubes = packet.cubes === undefined ? "" : ` · ${known} Würfel erkannt`;
       const source = packet.source === "sensors" ? "" : "Programmkarte · ";
-      status.textContent = `${source}${packet.state} · ${packet.scans} Scans${slam}${packet.source === "sensors" && !tofEnabled ? " · ToF aus" : ""}`;
+      status.textContent = `${source}${packet.state} · ${packet.scans} Scans${slam}${cubes}${packet.source === "sensors" && !tofEnabled ? " · ToF aus" : ""}`;
       const [x, y, yaw] = packet.pose;
       pose.textContent = `x ${(x * 100).toFixed(1)} cm · y ${(y * 100).toFixed(1)} cm · θ ${(yaw * 180 / Math.PI).toFixed(1)}°`;
     }
@@ -70,6 +74,7 @@ export class DiscoveryView {
     let x0 = Math.min(0, p.pose[0]), x1 = Math.max(0, p.pose[0]), y0 = Math.min(0, p.pose[1]), y1 = Math.max(0, p.pose[1]);
     const add = (x: number, y: number) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
     for (const [x, y] of this.path) add(x, y);
+    for (const [x, y] of p.cubes ?? []) { add(x - CUBE, y - CUBE); add(x + CUBE, y + CUBE); }
     if (p.grid) {
       const half = p.size * p.cell / 2;
       for (let i = 0; i < p.grid.length; i++) {
@@ -130,6 +135,18 @@ export class DiscoveryView {
       line([v, -reach], [v, reach]);
       line([-reach, v], [reach, v]);
     }
+    // cubes the robot believes in, 6 × 6 cm as the rules say; a single sighting is only dashed
+    for (const [x, y, seen] of p?.cubes ?? []) {
+      const h = CUBE / 2;
+      c.lineWidth = 1.5 * px;
+      if (seen >= 2) {
+        c.fillStyle = "#ffd166"; c.strokeStyle = "#fff1c7";
+        c.fillRect(x - h, y - h, CUBE, CUBE); c.strokeRect(x - h, y - h, CUBE, CUBE);
+      } else {
+        c.setLineDash([3 * px, 2 * px]); c.strokeStyle = "#ffd166";
+        c.strokeRect(x - h, y - h, CUBE, CUBE); c.setLineDash([]);
+      }
+    }
     // start pose, the frame's origin
     c.strokeStyle = "#8e9eaf"; c.lineWidth = 1.5 * px;
     line([-0.025, 0], [0.025, 0]); line([0, -0.025], [0, 0.025]);
@@ -167,10 +184,16 @@ export class DiscoveryView {
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.fillStyle = "#aab9ca"; c.font = "11px monospace";
     c.fillText(this.mode === "map" ? "+y ↑  ·  +x →  ·  + = Start" : "Roboter blickt nach oben", 12, 17);
+    let legend = 12;
     if (p?.odom && this.mode === "map") {
       c.setLineDash([3, 3]); c.strokeStyle = "#aab9ca"; c.lineWidth = 1;
-      c.strokeRect(12, w - 24, 9, 9); c.setLineDash([]);
-      c.fillText("nur Odometrie", 26, w - 16);
+      c.strokeRect(legend, w - 24, 9, 9); c.setLineDash([]);
+      c.fillText("nur Odometrie", legend + 14, w - 16);
+      legend += 112;
+    }
+    if (p?.cubes?.length) {
+      c.fillStyle = "#ffd166"; c.fillRect(legend, w - 24, 9, 9);
+      c.fillStyle = "#aab9ca"; c.fillText("Würfel 6 cm", legend + 14, w - 16);
     }
     if (!p) {
       c.textAlign = "center";

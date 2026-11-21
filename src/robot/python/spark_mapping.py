@@ -2,6 +2,12 @@
 
 No simulator imports, arena geometry or object positions: the pose correction
 comes only from matching new ToF hits against the map built so far (SLAM).
+Prior knowledge from the rules is allowed: every cube is 6 x 6 x 6 cm and
+stands free, walls are long and 10 cm high. Cubes are kept as centre estimates
+(DiscoveryMap.cubes, known_cubes()). The grid keeps raw hits for scan
+matching; the published map hides the wider smear around a known cube, which
+the view draws at its real size instead. Cubes within the robot's reach may
+be pushed and stay out of scan matching.
 Copy alongside spark_tof.py to the robot. Units: metres, radians, microseconds.
 The start pose is an assumption: (0, 0, 0), +x in the starting direction.
 """
@@ -96,6 +102,75 @@ def _segment_distance(px, py, x0, y0, x1, y1):
     return math.sqrt((px - x0 - f * dx) ** 2 + (py - y0 - f * dy) ** 2)
 
 
+# Known from the rules, not measured: every cube is 6 x 6 x 6 cm.
+CUBE = 0.06
+CUBE_TALL = 0.08    # a return this high at the face's depth is a wall; cube hits stay below ~7.5 cm
+CUBE_STEP = 0.04    # depth step between neighbouring columns that still belongs to one face
+CUBE_GAP = 0.05     # neighbour columns must be this much farther (or empty): a cube stands free
+CUBE_JOIN = 0.09    # a sighting this close to a known cube is the same cube
+CUBE_MEMORY = 8     # averaging weight cap, so a pushed cube can follow its new sightings
+CUBE_MAX = 16       # five cubes in the arena; room for a few stray sightings on top
+CUBE_STILL = 0.2    # farther than this from the robot a cube was not pushed: fine for scan matching
+
+
+def cube_sightings(columns, mount_x, fov=math.pi / 4):
+    """Runs of columns that look like one free-standing 6 cm cube.
+
+    columns[i] is None or (depth, tan_lateral, tall). The sensor reports the
+    strongest return per zone, so a bright cube fills every zone it barely
+    touches: the run is up to one zone wider than the cube. Knowing the size,
+    the centre is the middle of the run, half a cube behind the nearest face.
+    Returns (x, y, first_col, last_col) in the robot frame (x forward, y left).
+    """
+    size = len(columns)
+    zone = 2 * math.tan(fov / 2) / size
+    out = []
+    i = 0
+    while i < size:
+        if columns[i] is None:
+            i += 1
+            continue
+        j = i
+        while j + 1 < size and columns[j + 1] is not None and abs(columns[j + 1][0] - columns[j][0]) < CUBE_STEP:
+            j += 1
+        run = columns[i:j + 1]
+        near = min(c[0] for c in run)
+        far = max(c[0] for c in run)
+        # Free-standing: a neighbour on both sides, each empty or clearly farther.
+        # A run at the edge of the view may continue outside it: unknown.
+        if 0 < i and j < size - 1:
+            left, right = columns[i - 1], columns[j + 1]
+            free = (left is None or left[0] > far + CUBE_GAP) and (right is None or right[0] > far + CUBE_GAP)
+            span = near * (run[-1][1] - run[0][1])
+            if free and not any(c[2] for c in run) and span <= CUBE + near * zone + 0.01:
+                tan = (run[0][1] + run[-1][1]) / 2
+                back = CUBE / 2 / math.sqrt(1 + tan * tan)
+                out.append((mount_x + near + back, (near + back) * tan, i, j))
+        i = j + 1
+    return out
+
+
+def on_cube(depth, zone):
+    """How far from a known cube's centre a hit still lies on that cube:
+    half a cube, plus half a zone the bright cube bleeds into."""
+    return CUBE / 2 + depth * zone / 2 + 0.015
+
+
+def seen_through(cube, ray):
+    """A beam that passes right through a known cube and ends well behind it:
+    the cube is not there any more (pushed away)."""
+    ox, oy, ex, ey = ray
+    dx, dy = ex - ox, ey - oy
+    length = math.sqrt(dx * dx + dy * dy)
+    if length == 0:
+        return False
+    along = ((cube[0] - ox) * dx + (cube[1] - oy) * dy) / length
+    if along < 0 or along > length - CUBE:
+        return False
+    # Within half a cube of the centre the bright cube would have filled that zone.
+    return abs((cube[0] - ox) * dy - (cube[1] - oy) * dx) / length < CUBE / 2
+
+
 class DiscoveryMap:
     # Local drawing window, NOT a known arena boundary. All cells start unknown.
     SIZE = 48
@@ -113,8 +188,6 @@ class DiscoveryMap:
         self.pose = odometry
         self.match = match
         self.cells = array('b', [0] * (self.SIZE * self.SIZE))
-        self._chars = bytearray(b'0' * (self.SIZE * self.SIZE))  # packet grid, kept in step with cells
-        self._scratch = bytearray(self.SIZE * self.SIZE)  # reused cluster mask: no 2 KB allocations later
         self.rays = []
         self.scan_time = None
         self.scan_pose = None
@@ -122,10 +195,16 @@ class DiscoveryMap:
         self.scans = 0
         self.matched = 0
         self.confident = 0  # cells with a confident hit; matching needs enough of them
+        # Known cubes, map frame: [x, y, sightings]. Two sightings or more = confirmed.
+        self.cubes = []
         # Rigid transform odometry frame -> map frame, found by scan matching.
         self.correction = (0.0, 0.0, 0.0)
         self._last_odom = None
         self._dirty = True
+        # The published grid, kept up to date cell by cell in _mark: building it
+        # at publish time costs ~60 ms and ''.join over 2304 cells a 16 KB list.
+        self._grid_text = bytearray(b'0' * (self.SIZE * self.SIZE))
+        self._scratch = bytearray(self.SIZE * self.SIZE)  # reused mask / grid copy: no 2 KB allocations later
 
     def corrected(self, pose):
         """Odometry pose -> map pose (what the robot believes after SLAM)."""
@@ -215,7 +294,7 @@ class DiscoveryMap:
             new = max(-6, min(6, old + delta))
             self.cells[index] = new
             self.confident += int(new >= 3) - int(old >= 3)
-            self._chars[index] = 50 if new > 0 else 49 if new < 0 else 48  # '2' '1' '0'
+            self._grid_text[index] = 50 if new > 0 else 49 if new < 0 else 48  # '2' hit, '1' free, '0' unknown
 
     @staticmethod
     def _slopes(size):
@@ -239,29 +318,41 @@ class DiscoveryMap:
         if size not in (4, 8):
             return
         odom = capture_pose if capture_pose is not None else (self.pose.x, self.pose.y, self.pose.heading)
+        # Per column the nearest return that hits something robot-high. Reject
+        # probable floor (too low) and returns over the walls (too high) using
+        # the ASSUMED level mount, not a geometry label.
         row_slope, col_slope = self._slopes(size)
         distance, status, targets = frame['distance_mm'], frame['target_status'], frame['nb_target_detected']
         low, high, mount_z = self.MIN_HEIGHT, self.MAX_HEIGHT, self.MOUNT_Z
-        # Hits in the robot frame: x forward from the robot origin, y left.
-        local = []
+        columns = []
         for col in range(size):
-            depth = None
-            # Nearest return per column that hits something robot-high. Reject
-            # probable floor (too low) and returns over the walls (too high)
-            # using the ASSUMED level mount, not a geometry label.
+            accepted = []
             for row in range(size):
                 zone = row * size + col
                 if status[zone] != 5 or targets[zone] < 1:
                     continue
                 d = distance[zone] / 1000
-                if 0.02 <= d <= 1.5 and low <= mount_z + d * row_slope[row] <= high:
-                    if depth is None or d < depth:
-                        depth = d
-            if depth is None:
+                estimated_height = mount_z + d * row_slope[row]
+                if 0.02 <= d <= 1.5 and low <= estimated_height <= high:
+                    accepted.append((d, estimated_height))
+            if not accepted:
                 # Invalid / above objects / floor: unknown, never free space.
+                columns.append(None)
                 continue
+            depth = min(a[0] for a in accepted)
             # ST reports optical-axis depth, not radial distance. Raw col 0 is RIGHT.
-            local.append((self.MOUNT_X + depth, depth * col_slope[col]))
+            tan = col_slope[col]
+            tall = any(d - depth < CUBE_STEP and h > CUBE_TALL for d, h in accepted)
+            columns.append((depth, tan, tall))
+        sightings = cube_sightings(columns, self.MOUNT_X)
+        # Hits in the robot frame: x forward from the robot origin, y left.
+        local, used = [], []
+        for col in range(size):
+            if columns[col] is not None:
+                depth, tan, _ = columns[col]
+                local.append((self.MOUNT_X + depth, depth * tan))
+                used.append(col)
+        on_sighting = [any(g[2] <= col <= g[3] for g in sightings) for col in used]
         pose = self.corrected(odom)
         # How far odometry may be off since the previous scan: grows with the
         # travelled distance and the turned angle (slip, gyro scale error).
@@ -270,8 +361,23 @@ class DiscoveryMap:
         turned = abs(_wrap(odom[2] - last[2]))
         self._last_odom = odom
         sigma = (0.004 + 0.1 * moved + 0.01 * turned, 0.01 + 0.3 * turned + 0.5 * moved)
-        if self.match and local and self.confident >= self.MATCH_MIN_CELLS:
-            matched = self._match(local, pose, sigma)
+        # Match only what cannot have moved: hits on a cube within the robot's
+        # reach (sighted now or known from earlier) stay out of scan matching.
+        zone = 2 * math.tan(math.pi / 8) / size
+        cs, sn = math.cos(pose[2]), math.sin(pose[2])
+        near = [c for c in self.cubes if c[2] >= 2
+                and (c[0] - pose[0]) ** 2 + (c[1] - pose[1]) ** 2 < CUBE_STILL ** 2]
+        static = []
+        for k in range(len(local)):
+            lx, ly = local[k]
+            if on_sighting[k] and lx * lx + ly * ly < CUBE_STILL ** 2:
+                continue
+            ex, ey = pose[0] + cs * lx - sn * ly, pose[1] + sn * lx + cs * ly
+            reach = on_cube(columns[used[k]][0], zone) + 0.02  # odometry may be off before matching
+            if not any((c[0] - ex) ** 2 + (c[1] - ey) ** 2 < reach * reach for c in near):
+                static.append(local[k])
+        if self.match and static and self.confident >= self.MATCH_MIN_CELLS:
+            matched = self._match(static, pose, sigma)
             if matched is not None:
                 pose = matched
                 # New correction: odometry at capture maps exactly onto the matched pose.
@@ -287,16 +393,17 @@ class DiscoveryMap:
         for lx, ly in local:
             ex, ey = px + cs * lx - sn * ly, py + sn * lx + cs * ly
             rays.append([round(ox, 4), round(oy, 4), round(ex, 4), round(ey, 4)])
+        self._update_cubes(rays, sightings, pose)
         # Carve free evidence first, then all endpoints: one beam must not erase
         # another beam's hit in the same frame. Endpoint cells are excluded.
         hits = []
         n, inv = self.SIZE, 1 / self.CELL
         half = n * self.CELL / 2
-        cells, chars = self.cells, self._chars
+        cells, text = self.cells, self._grid_text
         for ox, oy, ex, ey in rays:
             hit = self._cell(ex, ey)
             hits.append(hit)
-            # Same half-cell sampling as _cell() along the beam, in grid units.
+            # Same half-cell sampling as _cell() along the beam, inlined in grid units.
             gx, gy = (ox + half) * inv, (half - oy) * inv
             steps = max(1, int(math.ceil(math.sqrt((ex - ox) ** 2 + (ey - oy) ** 2) * inv * 2)))
             sx, sy = (ex - ox) * inv / steps, (oy - ey) * inv / steps
@@ -313,10 +420,11 @@ class DiscoveryMap:
                         cells[index] = old - 1
                         if old == 3:
                             self.confident -= 1
-                        chars[index] = 50 if old > 1 else 49 if old <= 0 else 48
+                        text[index] = 50 if old > 1 else 49 if old <= 0 else 48
                 previous = index
         for hit in set(hits):
-            self._mark(hit, 3)
+            if hit is not None:
+                self._mark(hit, 3)
         self.rays = rays
         self.scan_time = now_us / 1000000
         self.scan_pose = [round(px, 4), round(py, 4), round(heading, 5)]
@@ -459,6 +567,8 @@ class DiscoveryMap:
                 cx, cy = self.center(i)
                 if (cx - x) ** 2 + (cy - y) ** 2 <= radius * radius and self.cells[i]:
                     self._mark(i, -self.cells[i])
+        # Known cubes there are gone too.
+        self.cubes = [c for c in self.cubes if (c[0] - x) ** 2 + (c[1] - y) ** 2 > radius * radius]
         self._dirty = True
 
     def reset_pose(self, x=0.0, y=0.0, heading=0.0):
@@ -471,6 +581,65 @@ class DiscoveryMap:
         p.clear_history()
         self.correction = (0.0, 0.0, 0.0)
         self._last_odom = None
+
+    def _update_cubes(self, rays, sightings, pose):
+        # Beams through a known cube weaken it (pushed away); then this frame's sightings.
+        for cube in list(self.cubes):
+            if any(seen_through(cube, r) for r in rays):
+                cube[2] = min(cube[2], CUBE_MEMORY) - 1
+                if cube[2] <= 0:
+                    self.cubes.remove(cube)
+        px, py, heading = pose
+        cs, sn = math.cos(heading), math.sin(heading)
+        for lx, ly, _, _ in sightings:
+            x, y = px + cs * lx - sn * ly, py + sn * lx + cs * ly
+            best, gap = None, CUBE_JOIN
+            for cube in self.cubes:
+                d = math.sqrt((cube[0] - x) ** 2 + (cube[1] - y) ** 2)
+                if d < gap:
+                    best, gap = cube, d
+            if best is None:
+                # Bounded memory: a single stray sighting makes room first.
+                if len(self.cubes) >= CUBE_MAX:
+                    self.cubes.remove(min(self.cubes, key=lambda c: c[2]))
+                best = [x, y, 1]
+                self.cubes.append(best)
+            else:
+                w = min(best[2], CUBE_MEMORY)
+                best[0] = (best[0] * w + x) / (w + 1)
+                best[1] = (best[1] * w + y) / (w + 1)
+                best[2] += 1
+
+    def _grid_bytes(self):
+        """Published map: obstacle cells around a known cube are that cube seen
+        too wide (a bright cube fills every ToF zone it touches). Hide them,
+        the cube itself is published at its real 6 cm size. Returns a bytearray
+        (the scratch buffer when something is hidden: no new 2 KB block)."""
+        text = self._grid_text
+        known = [c for c in self.cubes if c[2] >= 2]
+        if known:
+            self._scratch[:] = text
+            text = self._scratch
+            half = self.SIZE * self.CELL / 2
+            reach = CUBE / 2 + self.CELL
+            for c in known:
+                for dx in (-2, -1, 0, 1, 2):
+                    for dy in (-2, -1, 0, 1, 2):
+                        index = self._cell(c[0] + dx * self.CELL, c[1] + dy * self.CELL)
+                        if index is None or text[index] != 50:
+                            continue
+                        cx = -half + (index % self.SIZE + 0.5) * self.CELL
+                        cy = half - (index // self.SIZE + 0.5) * self.CELL
+                        if abs(cx - c[0]) < reach and abs(cy - c[1]) < reach:
+                            text[index] = 48
+        return text
+
+    def _grid(self):
+        return str(self._grid_bytes(), 'ascii')
+
+    def known_cubes(self):
+        """Confirmed cubes, map frame: [(x, y), ...]. Use for planning."""
+        return [(c[0], c[1]) for c in self.cubes if c[2] >= 2]
 
     def packet(self, now_us, state, grid=True):
         p = self.pose
@@ -485,9 +654,10 @@ class DiscoveryMap:
             'scan_t': round(self.scan_time, 4) if self.scan_time is not None else None,
             'scan_pose': self.scan_pose,
             'rays': self.rays, 'size': self.SIZE, 'cell': self.CELL,
+            'cubes': [[round(c[0], 4), round(c[1], 4), c[2]] for c in self.cubes],
         }
         if grid and self._dirty:
-            packet['grid'] = str(self._chars, 'ascii')
+            packet['grid'] = self._grid()
             self._dirty = False
         return packet
 
@@ -502,7 +672,7 @@ class DiscoveryMap:
             return
         self._dirty = False
         print('@spark-map ' + json.dumps(packet)[:-1] + ', "grid": "', end='')
-        chars = self._chars
+        chars = self._grid_bytes()
         for i in range(0, len(chars), 256):
             print(str(chars[i:i + 256], 'ascii'), end='')
         print('"}')

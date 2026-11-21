@@ -5,7 +5,8 @@ import { arenaById } from "../src/shared/arenas.ts";
 import type { DiscoveryPacket } from "../src/shared/discovery.ts";
 import type { RobotSnapshot } from "../src/shared/protocol.ts";
 import { World } from "../src/world/world.ts";
-import { SensorMapper } from "../src/shared/sensor-mapping.ts";
+import { CUBE, SensorMapper } from "../src/shared/sensor-mapping.ts";
+import { cubesFromSeed } from "../src/shared/push-pull.ts";
 import { Recorder } from "../src/ui/recorder.ts";
 
 const mj = await loadMujoco();
@@ -92,3 +93,29 @@ try {
   observed.dispose(); control.dispose();
 }
 console.log("ok   passive mapping leaves physics, program sensor noise and UART bytes unchanged");
+
+// Known cube size: spinning once at the start, the map holds each cube as a 6 cm cube near its
+// true centre (start pose = map origin) instead of the wider smear of its 5 cm hit cells.
+const spin = new World(mj, arena, [arena.starts[0]], { seed: 4, tof: [true], cubes: cubesFromSeed(4) });
+try {
+  spin.robots[0].cmd = [-2000, 2000];
+  spin.advanceTo(4_000_000);
+  const { discovery } = spin.snapshot(1).robots[0];
+  const truth = spin.snapshot(1).cubes!.map((c) => [c.pos[0], c.pos[1]]);
+  const known = discovery!.cubes!.filter((c) => c[2] >= 2);
+  assert.equal(known.length, 5, `all five free-standing cubes found (${JSON.stringify(discovery!.cubes)})`);
+  for (const [x, y] of truth) {
+    const error = Math.min(...known.map((c) => Math.hypot(c[0] - x, c[1] - y)));
+    assert(error < 0.03, `cube at (${x.toFixed(2)}, ${y.toFixed(2)}) estimated ${(error * 100).toFixed(1)} cm off`);
+  }
+  const { size, cell, grid } = discovery!;
+  const half = size * cell / 2;
+  for (let i = 0; i < size * size; i++) {
+    if (grid![i] !== "2") continue;
+    const x = -half + (i % size + 0.5) * cell, y = half - (Math.floor(i / size) + 0.5) * cell;
+    assert(known.every((c) => Math.max(Math.abs(c[0] - x), Math.abs(c[1] - y)) >= CUBE / 2 + cell), "no obstacle cells drawn around a known cube");
+  }
+  console.log(`ok   known 6 cm cubes: ${known.length} found, worst centre error ${(Math.max(...truth.map(([x, y]) => Math.min(...known.map((c) => Math.hypot(c[0] - x, c[1] - y))))) * 100).toFixed(1)} cm`);
+} finally {
+  spin.dispose();
+}

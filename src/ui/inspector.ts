@@ -32,7 +32,9 @@ export function renderScoreboard(match: MatchState | undefined, names: string[],
   const title = document.createElement("b");
   title.textContent = MODE_TITLE[match.mode] ?? match.mode;
   const time = document.createElement("span");
-  if (match.phase === "waiting") time.textContent = "waiting for start";
+  const calibrating = match.phase === "waiting" && !!match.calWindow;
+  if (calibrating) time.textContent = `calibration ${match.calWindow}/3`;
+  else if (match.phase === "waiting") time.textContent = "waiting for start";
   else if (match.phase === "countdown") time.textContent = `start in ${Math.ceil(match.countdown - 1e-6)}`;
   else time.textContent = match.timeLimit ? `${clock(match.t)} / ${clock(match.timeLimit)}` : clock(match.t);
   head.classList.toggle("waiting", match.phase === "waiting" || match.phase === "countdown");
@@ -60,7 +62,7 @@ export function renderScoreboard(match: MatchState | undefined, names: string[],
     return row;
   });
   el.replaceChildren(head, ...rows);
-  if (match.phase === "waiting") {
+  if (match.phase === "waiting" && !calibrating) {
     const hint = document.createElement("div");
     hint.className = "sb-hint";
     hint.textContent = "⚑ Start (key S) gives the start signal";

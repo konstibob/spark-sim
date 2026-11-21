@@ -63,6 +63,7 @@ class Pilot:
         self._publish_us = -1000000
         self._grid_us = -1000000
         self._line_us = -1000000
+        self._gc_us = 0
         self._dark_since = None
         self._dark_tape = False
         self._frame = None
@@ -131,30 +132,37 @@ class Pilot:
                     cut = piece.rfind(b"\n")
                     tail = piece[cut + 1:] if cut >= 0 else (tail + piece if len(tail) < 2048 else b"")
                 self.sensor._buffer = tail
-            for _ in range(4):
-                try:
-                    frame = self.sensor.read()
-                except ValueError:
-                    frame = None  # a line cut by a full UART buffer; the next one is whole
-                    self.sensor._buffer = b""
-                if frame is None:
-                    break
-                self._frame = frame
-            if self._frame is not None:
-                captured = self._frame['t_us'] + self.esp_offset_us
-                at = self.odom.at(captured)
-                if at is not None:
-                    self.map.observe(self._frame, captured, at)
+            try:
+                for _ in range(4):
+                    try:
+                        frame = self.sensor.read()
+                    except ValueError:
+                        frame = None  # a line cut by a full UART buffer; the next one is whole
+                        self.sensor._buffer = b""
+                    if frame is None:
+                        break
+                    self._frame = frame
+                if self._frame is not None:
+                    captured = self._frame['t_us'] + self.esp_offset_us
+                    at = self.odom.at(captured)
+                    if at is not None:
+                        self.map.observe(self._frame, captured, at)
+            except MemoryError:
+                # Fragmented heap: drop this frame instead of stopping the robot.
+                self.sensor._buffer = b""
+                self._frame = None
+                gc.collect()
         elif self.sensor is not None:
             self._stale = True
         if line or self.us - self._line_us >= self.LINE_EVERY_US:
             self._line_us = self.us
             self.line_values = self.line.read()
             self._check_lift()
+        if self.us - self._gc_us >= 500000:
+            self._gc_us = self.us
+            gc.collect()  # little and often: keeps free blocks large on the 190 KB heap
         if self.publish and self.us - self._publish_us >= 100000:
             grid = self.us - self._grid_us >= 500000
-            if grid:
-                gc.collect()  # the grid packet needs ~3 KB in one piece
             self.map.publish(self.us, self.state, grid)
             self._publish_us = self.us
             if grid:

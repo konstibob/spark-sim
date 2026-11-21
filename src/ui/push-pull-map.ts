@@ -1,4 +1,5 @@
 import type { Pose } from "../shared/arenas.ts";
+import { CALIBRATION_DEFAULT, CAL_TOTAL_S, validCalibration, type CalibrationSetup } from "../shared/calibration.ts";
 import type { WorldSnapshot } from "../shared/protocol.ts";
 import { blocksStart, cubeFootprint, cubePoints, cubesFromSeed, DEFAULT_CUBES, PUSH_PULL, validCubeLayout, type CubeView } from "../shared/push-pull.ts";
 
@@ -17,8 +18,15 @@ export class PushPullMap {
   private draft: Pose[] | null = null;
   private controls!: HTMLFieldSetElement;
   private seedInput!: HTMLInputElement;
+  private calControls!: HTMLFieldSetElement;
 
-  constructor(private layout: () => Pose[], private seed: () => number | null, private change: (poses: Pose[], seed: number | null) => void, private referee: (action: "rescue" | "touch" | "finish") => void) {
+  constructor(
+    private layout: () => Pose[],
+    private seed: () => number | null,
+    private change: (poses: Pose[], seed: number | null) => void,
+    private referee: (action: "rescue" | "touch" | "finish") => void,
+    private calibration: { get(): CalibrationSetup | null; set(value: CalibrationSetup | null): void },
+  ) {
     this.dialog.className = "pp-dialog";
     this.dialog.setAttribute("aria-label", "Challenge 2 · Arena-Karte");
     this.dialog.innerHTML = `
@@ -26,16 +34,34 @@ export class PushPullMap {
       <div class="pp-specs"><span><b>160 × 160</b> cm Arena</span><span><b>30 × 30</b> cm Zuhause</span><span><b>12 × 12</b> cm Start</span><span><b>5 × 6</b> cm Würfel</span></div>
       <div class="pp-layout"><div class="pp-map-wrap"><canvas width="640" height="640" tabindex="0" aria-label="Arena-Karte. Würfel vor dem Lauf ziehen oder Koordinaten rechts eingeben."></canvas><button class="btn" data-zoom>Zentrum vergrößern</button><span class="hint">Oben = +y · rechts = +x · Start in Richtung +x</span></div>
       <div class="pp-settings"><p data-status></p><fieldset><legend>Startaufstellung · Koordinaten in cm</legend><table><thead><tr><th>Würfel</th><th>x</th><th>y</th><th>°</th></tr></thead><tbody></tbody></table><div class="pp-actions pp-seed"><label>Seed <input type="number" min="1" max="999999" step="1" data-seed aria-label="Seed der Würfelaufstellung"></label><button class="btn" data-random title="Neue zufällige Aufstellung; derselbe Seed ergibt immer dieselbe">Neuer Seed</button></div><div class="pp-actions"><button class="btn" data-default>Beispiel</button><button class="btn" data-export>JSON speichern</button><button class="btn" data-import>JSON laden</button><input type="file" accept=".json,application/json" hidden data-file></div></fieldset>
+      <fieldset data-cal><legend>Kalibrierung · nur Simulation</legend><label><input type="checkbox" data-cal-on> Die drei 10-s-Fenster der Crew vor dem Lauf durchspielen (+${CAL_TOTAL_S} s)</label><div class="pp-actions"><label>Wand <input type="number" min="1" max="10" step="0.5" data-cal-wall aria-label="Abstand Schaufel zur Wand in cm"> cm</label><label>Würfel <input type="number" min="1" max="10" step="0.5" data-cal-cube aria-label="Abstand Schaufel zum Würfel in cm"> cm</label></div><p class="hint">Aus (Standard): <code>spark_start.SIM_SKIP_CALIBRATION</code> ist True, ein Programm überspringt seine Fenster und nimmt seine eingebauten Werte. Der echte Roboter hat das Attribut nicht und kalibriert immer.</p></fieldset>
       <p class="pp-error" role="status" data-error></p>
       <p>Würfel vor dem Lauf ziehen. Gleiche Aufstellung für jeden Versuch; <b>Reset</b> setzt sie zurück. Die offiziellen Würfelpositionen sind noch unbekannt.</p>
       <p>Das 2,5-cm-Band zählt zur Fläche. <b>3 Punkte</b> vollständig im kleinen Quadrat samt Band (17 × 17 cm). <b>1 Punkt</b> mindestens halb im großen Quadrat samt Band (35 × 35 cm). Vier Würfel passen mit Luft hinein: <b>13 Punkte</b>; theoretisch fünf (einer um 45° gedreht): 15.</p>
-      <details><summary>Modell & Schiedsrichter</summary><p>Schwarze Wände: 10 cm hoch. Band außen an den Zielquadraten. Band 2,5 cm. Würfel 140 g (schwer) und 40 g (leicht): pro Lauf zufällig 2 schwere + 3 leichte (75 %) oder 3 schwere + 2 leichte (25 %); die Gewichte stehen im Log und während des Laufs auf der Karte. Roboter +8 g für das ESP32-C6-Board (geschätzt). Annahme: Reibwert 0,35. IR-Werte sind Näherungen. Keine Greifvorrichtung; Schieben mit der Zumo-Schaufel.</p><p>Start sofort mit A; 120 Sekunden. Zwei grüne Blinkimpulse im Abstand von 0,1–2 s beenden den Lauf. Frühstarts werden gemeldet; den offiziellen Neustart beurteilst du selbst. Feststecken prüft die Sim automatisch: nach 5 s ohne Bewegung (unter 3 cm, unter 30° Drehung) eine Warnung, nach 10 s hebt der Schiedsrichter den Roboter hoch (1 s in der Luft, Liniensensoren sehen nichts) und setzt ihn ins Startquadrat in Startrichtung (−1; liegt dort ein Würfel, an die nächste freie Stelle daneben); beim zweiten Mal endet der Lauf.</p><div class="pp-actions" data-referee><button class="btn" data-action="rescue">Befreien −1</button><button class="btn" data-action="touch">Berührt −1 & Ende</button><button class="btn" data-action="finish">Grün bestätigt</button></div><p>Nach „Befreien“ Karte schließen und Roboter mit Shift+Ziehen versetzen. Zweites Befreien beendet den Lauf.</p></details>
+      <details><summary>Modell & Schiedsrichter</summary><p>Schwarze Wände: 10 cm hoch. Band außen an den Zielquadraten. Band 2,5 cm. Würfel 140 g (schwer) und 40 g (leicht): pro Lauf zufällig 2 schwere + 3 leichte (75 %) oder 3 schwere + 2 leichte (25 %); die Gewichte stehen im Log und während des Laufs auf der Karte. Roboter +8 g für das ESP32-C6-Board (geschätzt). Annahme: Reibwert 0,35. Näherungs- und Liniensensoren nach den Messwerten der Crew (Stock-Zumo, 21.11.2026); schräg, seitlich und über 24 cm hinaus extrapoliert. Keine Greifvorrichtung; Schieben mit der Zumo-Schaufel.</p><p>Start sofort mit A; 120 Sekunden. Zwei grüne Blinkimpulse im Abstand von 0,1–2 s beenden den Lauf. Frühstarts werden gemeldet; den offiziellen Neustart beurteilst du selbst. Feststecken prüft die Sim automatisch: nach 5 s ohne Bewegung (unter 3 cm, unter 30° Drehung) eine Warnung, nach 10 s hebt der Schiedsrichter den Roboter hoch (1 s in der Luft, Liniensensoren sehen nichts) und setzt ihn ins Startquadrat in Startrichtung (−1; liegt dort ein Würfel, an die nächste freie Stelle daneben); beim zweiten Mal endet der Lauf.</p><div class="pp-actions" data-referee><button class="btn" data-action="rescue">Befreien −1</button><button class="btn" data-action="touch">Berührt −1 & Ende</button><button class="btn" data-action="finish">Grün bestätigt</button></div><p>Nach „Befreien“ Karte schließen und Roboter mit Shift+Ziehen versetzen. Zweites Befreien beendet den Lauf.</p></details>
       </div></div>`;
     document.body.append(this.dialog);
     this.canvas = this.dialog.querySelector("canvas")!;
     this.status = this.dialog.querySelector("[data-status]")!;
     this.error = this.dialog.querySelector("[data-error]")!;
     this.controls = this.dialog.querySelector("fieldset")!;
+    this.calControls = this.dialog.querySelector<HTMLFieldSetElement>("[data-cal]")!;
+    const calOn = this.calControls.querySelector<HTMLInputElement>("[data-cal-on]")!;
+    const calWall = this.calControls.querySelector<HTMLInputElement>("[data-cal-wall]")!;
+    const calCube = this.calControls.querySelector<HTMLInputElement>("[data-cal-cube]")!;
+    const calChange = () => {
+      const next = { wallCm: calWall.valueAsNumber, cubeCm: calCube.valueAsNumber };
+      if (!validCalibration(next)) {
+        this.error.textContent = "Abstand zur Wand und zum Würfel: 1 bis 10 cm.";
+        this.syncInputs();
+        return;
+      }
+      this.error.textContent = "";
+      this.calibration.set(calOn.checked ? next : null);
+    };
+    calOn.onchange = calChange;
+    calWall.onchange = calChange;
+    calCube.onchange = calChange;
     const rows = this.dialog.querySelector("tbody")!;
     for (let i = 0; i < 5; i++) {
       const row = document.createElement("tr");
@@ -114,11 +140,15 @@ export class PushPullMap {
 
   open() { this.syncInputs(); this.dialog.showModal(); this.draw(); }
   update(snap: WorldSnapshot, editable: boolean) {
-    this.snap = snap; this.editable = editable; this.controls.disabled = !editable;
+    this.snap = snap; this.editable = editable; this.controls.disabled = !editable; this.calControls.disabled = !editable;
     if (this.dialog.open) this.draw();
     this.dialog.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => { b.disabled = snap.match.phase !== "running" || snap.match.ended; });
   }
   private syncInputs() {
+    const cal = this.calibration.get();
+    this.calControls.querySelector<HTMLInputElement>("[data-cal-on]")!.checked = !!cal;
+    this.calControls.querySelector<HTMLInputElement>("[data-cal-wall]")!.value = String((cal ?? CALIBRATION_DEFAULT).wallCm);
+    this.calControls.querySelector<HTMLInputElement>("[data-cal-cube]")!.value = String((cal ?? CALIBRATION_DEFAULT).cubeCm);
     const seed = this.seed();
     this.seedInput.value = seed === null ? "" : String(seed);
     this.seedInput.placeholder = seed === null ? "eigene" : "";
@@ -151,6 +181,11 @@ export class PushPullMap {
       const mass = (cube as CubeView).mass;
       if (!this.editable && mass) { ctx.font = `${this.zoom ? 15 : 12}px sans-serif`; ctx.fillText(`${Math.round(mass * 1000)} g`, px(cube.pos[0]), py(cube.pos[1] - PUSH_PULL.cube * 0.75) + (this.zoom ? 0 : 6)); }
     });
+    const calCube = this.snap?.calCube;
+    if (calCube) {
+      const pts = cubeFootprint(calCube); ctx.beginPath(); pts.forEach(([x, y], k) => k ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y))); ctx.closePath();
+      ctx.fillStyle = "#fde7c4"; ctx.strokeStyle = "#c27a12"; ctx.lineWidth = 2; ctx.setLineDash([5, 3]); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    }
     const robot = this.snap?.robots[0]; const [rx, ry] = robot?.pos ?? [0, 0]; const yaw = (robot?.yaw ?? 0) * Math.PI / 180;
     ctx.save(); ctx.translate(px(rx), py(ry)); ctx.rotate(-yaw); ctx.fillStyle = "#3483f5"; ctx.fillRect(-0.05 * scale, -0.049 * scale, 0.1 * scale, 0.098 * scale); ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(0.045 * scale, 0); ctx.lineTo(0.005 * scale, -0.024 * scale); ctx.lineTo(0.005 * scale, 0.024 * scale); ctx.fill(); ctx.restore();
     ctx.textBaseline = "alphabetic";

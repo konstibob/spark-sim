@@ -22,6 +22,8 @@ export interface DiscoveryPacket {
   scan_pose?: [number, number, number] | null;
   rays: [number, number, number, number][];
   grid?: string;
+  /** Cubes the robot believes in, map frame: centre x, y and sightings. Known 6 cm size, drawn to scale. */
+  cubes?: [number, number, number][];
 }
 
 const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
@@ -40,6 +42,7 @@ export function parseDiscovery(line: string): DiscoveryPacket | null {
     if (p.odom !== undefined && (!Array.isArray(p.odom) || p.odom.length !== 3 || !p.odom.every(finite))) return null;
     if (p.matched !== undefined && (!Number.isInteger(p.matched) || p.matched < 0 || p.matched > p.scans)) return null;
     if (p.scan_pose !== undefined && p.scan_pose !== null && (!Array.isArray(p.scan_pose) || p.scan_pose.length !== 3 || !p.scan_pose.every(finite))) return null;
+    if (p.cubes !== undefined && (!Array.isArray(p.cubes) || p.cubes.length > 32 || !p.cubes.every((c) => Array.isArray(c) && c.length === 3 && c.every(finite) && c[2] >= 1))) return null;
     if (p.grid !== undefined && (typeof p.grid !== "string" || p.grid.length !== p.size ** 2 || /[^012]/.test(p.grid))) return null;
     return p;
   } catch { return null; }

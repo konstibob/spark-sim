@@ -26,15 +26,25 @@ touching −1. No radio on the robot, no remote control, only shop parts, max 50
 - **Do not bring up the time, the clock or how close the code freeze is unless the user asks about it.**
   The deadlines are in the README; don't use them to push priorities or add urgency to answers.
 - Any MicroPython you write for the robot must run unchanged in `team-green`: keep the template's start block
-  (`from spark_start import wait_for_start` + `wait_for_start()` first in `main()`), `motors.off()` in
-  `finally`, top-level `main()` call (no `if __name__ == "__main__"`), only `zumo_2040_robot` + MicroPython
-  stdlib. `src/examples/challenge2_template.py` is the unchanged team template.
+  (`from spark_start import wait_for_start` + `wait_for_start()` before the round; only the calibration
+  windows may come before it), `motors.off()` in `finally`, top-level `main()` call (no
+  `if __name__ == "__main__"`), only `zumo_2040_robot` + MicroPython stdlib.
+  `src/examples/challenge2_template.py` is the unchanged team template.
+- Calibration (crew update 21.11.2026): three 10 s windows before the round (start square, facing the black
+  wall, facing a cube; one A each; stand still at the end of each; scoop 1–10 cm from wall/cube, our choice).
+  The robot code always runs them. The only skip is simulator-only:
+  `getattr(spark_start, "SIM_SKIP_CALIBRATION", False)` is True in the sim unless calibration is switched on
+  (Arena-Karte or `--calibrate`); the crew's `spark_start` has no such attribute. Never add another skip path
+  (button, file, timeout) to robot code. `src/examples/challenge2_calibration.py` is the reference.
 - In the simulator, `spark_start.wait_for_start()` returns the moment button A is pressed (the sim's start
   signal stands in for the Crew's IR START). On the real robot the IR START also has no delay; button A there
   is the practice start with 5 s delay.
-- Measured: tape 2.5 cm, cubes 140 g (heavy) / 40 g (light), mix drawn per seed. Still assumptions: cube friction
-  0.35, IR reflectance cube 0.95 / wall 0.04 / tape 0.04 / floor 0.9, ESP board +8 g. Say so when a result
-  depends on the assumptions. Teammates are measuring the real sensors; measured numbers go into `src/shared/push-pull.ts`, `src/shared/zumo-spec.ts`
+- Measured: tape 2.5 cm, cubes 140 g (heavy) / 40 g (light), mix drawn per seed; the crew's stock Zumo front
+  prox sensor facing wall and cube 0–24 cm (default + 30 fine levels) and its line sensors on floor/tape
+  (`MEASURED_PROX`, `MEASURED_LINE`; the sim's walls/cubes use the fitted `PROX_RESPONSE`, refit with
+  `npx tsx scripts/fit-prox.ts`). Still assumptions: cube friction 0.35, prox at oblique angles / side sensors
+  / past 24 cm (extrapolated), prox noise, which wall the crew uses for calibration, ESP board +8 g. Say so
+  when a result depends on the assumptions. Teammates are measuring the real sensors; measured numbers go into `src/shared/push-pull.ts`, `src/shared/zumo-spec.ts`
   and `src/world/world.ts`.
 - Stuck rule in the sim: within 3 cm and under 30° of turning for 10 s = stuck. The first time costs −1 and the
   referee lifts the robot (1 s, line sensors read 1024) and puts it back in the start square in the start
@@ -55,10 +65,12 @@ npm run typecheck
 npx tsx tests/match.ts src/examples/challenge2_template.py --arena push-pull --press A@0.2 --seconds 121 --seed 7
 npx tsx tests/match.ts prog.py --arena push-pull --press A@0.2 --seconds 121 --cube-seed 42   # seeded layout
 npx tsx tests/match.ts prog.py --arena push-pull --press A@0.2 --seconds 121 --map layout.json # Arena-Karte export
+npx tsx tests/match.ts prog.py --arena push-pull --press A@0.2 --seconds 121 --calibrate 5,5  # crew's calibration windows first (+33 s)
 SPARK_TRACE=1 npx tsx tests/match.ts ...                                                      # positions + sensors per second
 # Many runs in parallel + score histogram (same seeds as the app's Runs grid):
 npm run runs -- prog.py --runs 16 --base-seed 1            # each run its own cube layout
 npm run runs -- prog.py --runs 50 --map layout.json        # one fixed layout, seeds vary the noise
+npm run runs -- prog.py --runs 16 --calibrate 5,5          # with the calibration windows
 npm run runs -- src/algorithms/nearest_cube.py --runs 32   # ToF on automatically ("# Sensors: tof"), or pass --tof
 npm run test:algorithms                                    # every src/algorithms/*.py: template rules + one full round
 ```
@@ -69,7 +81,9 @@ Run `npm test` and `npm run typecheck` before you say a change works.
 
 | Path | What |
 |---|---|
-| `src/shared/push-pull.ts` | Challenge 2 geometry, cube defaults, seeded layouts, scoring (`cubePoints`) |
+| `src/shared/push-pull.ts` | Challenge 2 geometry, cube defaults, seeded layouts, scoring (`cubePoints`), measured sensor values, fitted prox response |
+| `src/shared/calibration.ts` | Calibration windows: timing (`calibrationPlan`), where the crew places robot and cube (`calibrationPoses`) |
+| `scripts/fit-prox.ts` | Refits `PROX_RESPONSE` to `MEASURED_PROX` |
 | `src/shared/arenas.ts` | Arena registry; `push-pull` arena (reflectance, MJCF walls) |
 | `src/world/rules.ts` | Rules per mode; Push & Pull start, 120 s limit, green blink, penalties, stuck (`STUCK_*`) |
 | `src/world/world.ts` | Physics, motors, sensors (prox reflectance per material), lockstep scheduler |
@@ -83,6 +97,7 @@ Run `npm test` and `npm run typecheck` before you say a change works.
 | `src/ui/push-pull-map.ts` | Arena-Karte: cube layout editor, seed, referee actions |
 | `src/ui/viewer.ts` | three.js 3D view |
 | `tests/push-pull.ts` | Push & Pull checks (part of `npm test`) |
+| `tests/calibration.ts` | Calibration windows with real programs (part of `npm test`) |
 | `docs/ARCHITECTURE.md` | How world, robot workers and lockstep fit together |
 
 ## Git workflow

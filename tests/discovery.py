@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src/robot/python'))
-from spark_mapping import Odometry, DiscoveryMap
+from spark_mapping import Odometry, DiscoveryMap, cube_sightings, CUBE
 
 
 def frame(depth=400, sequence=1):
@@ -34,6 +34,17 @@ def room_frame(x, y, heading, sequence, walls=(-0.45, 0.55, -0.35, 0.4)):
         depth = min(hits) * math.cos(math.atan(tan_a))  # optical-axis depth, like the sensor
         zone = 3 * 8 + col
         distances[zone], status[zone], counts[zone] = round(depth * 1000), 5, 1
+    return dict(seq=sequence, resolution=64, distance_mm=distances,
+                target_status=status, nb_target_detected=counts)
+
+
+def cube_frame(cube_mm=400, wall_mm=900, cube_cols=(3, 4), sequence=1):
+    """A bright cube in columns 3-4 (low row 5) in front of a far wall (row 4, every column)."""
+    distances, status, counts = [0] * 64, [255] * 64, [0] * 64
+    for col in range(8):
+        distances[32 + col], status[32 + col], counts[32 + col] = wall_mm, 5, 1
+        if col in cube_cols:
+            distances[40 + col], status[40 + col], counts[40 + col] = cube_mm, 5, 1
     return dict(seq=sequence, resolution=64, distance_mm=distances,
                 target_status=status, nb_target_detected=counts)
 
@@ -159,6 +170,60 @@ class MappingTests(unittest.TestCase):
         m.observe(room_frame(0, 0, 0, 1), 1000000, (0.03, 0.02, 0.1))
         self.assertEqual(m.matched, 0, 'first scan has nothing to match against')
         self.assertEqual(m.correction, (0.0, 0.0, 0.0))
+
+    def test_cube_sighting_uses_known_size(self):
+        t = lambda col: math.tan(((col + 0.5) / 8 * 2 - 1) * math.pi / 8)
+        wall = [(1.2, t(c), False) for c in range(8)]
+        # Two columns at 40 cm, the bright cube bled into both: centre between them, 3 cm behind the face.
+        columns = list(wall)
+        columns[3], columns[4] = (0.4, t(3), False), (0.4, t(4), False)
+        (x, y, first, last), = cube_sightings(columns, 0.052)
+        self.assertAlmostEqual(x, 0.052 + 0.4 + CUBE / 2)
+        self.assertAlmostEqual(y, 0)
+        self.assertEqual((first, last), (3, 4))
+        # Too wide for a 6 cm cube at that distance: a wall piece or a robot, not a cube.
+        wide = list(wall)
+        for c in range(2, 7):
+            wide[c] = (0.4, t(c), False)
+        self.assertEqual(cube_sightings(wide, 0.052), [])
+        # A wall-high return at the same depth: wall, even when narrow.
+        tall = list(columns)
+        tall[3] = (0.4, t(3), True)
+        self.assertEqual(cube_sightings(tall, 0.052), [])
+        # Touching the edge of the view: it may continue outside, unknown.
+        edge = list(wall)
+        edge[0], edge[1] = (0.4, t(0), False), (0.4, t(1), False)
+        self.assertEqual(cube_sightings(edge, 0.052), [])
+        # Flush against a wall: no free gap behind, unknown.
+        flush = [(0.43, t(c), False) for c in range(8)]
+        flush[3], flush[4] = columns[3], columns[4]
+        self.assertEqual(cube_sightings(flush, 0.052), [])
+
+    def test_known_cube_is_mapped_at_its_size(self):
+        m = DiscoveryMap(Odometry(), match=False)
+        m.observe(cube_frame(sequence=1), 1000000)
+        self.assertEqual(m.known_cubes(), [], 'one sighting is only a candidate')
+        m.observe(cube_frame(sequence=2), 1100000)
+        (x, y), = m.known_cubes()
+        self.assertAlmostEqual(x, 0.482, places=3)
+        self.assertAlmostEqual(y, 0, places=3)
+        packet = m.packet(1100000, 'scan')
+        self.assertEqual(packet['cubes'], [[0.482, 0.0, 2]])
+        # Scan matching keeps the raw hit; the published map shows the cube, not its 5 cm cell.
+        cell = m._cell(0.452, 0.02)
+        self.assertGreater(m.cells[cell], 0)
+        self.assertEqual(packet['grid'][cell], '0')
+        self.assertEqual(packet['grid'][m._cell(*m.rays[0][2:])], '2', 'the wall stays on the map')
+
+    def test_pushed_cube_is_forgotten_after_seeing_through(self):
+        m = DiscoveryMap(Odometry(), match=False)
+        for seq in (1, 2):
+            m.observe(cube_frame(sequence=seq), seq * 100000)
+        self.assertEqual(len(m.known_cubes()), 1)
+        # The cube is gone: the same columns now reach the wall behind it.
+        for seq in range(3, 10):
+            m.observe(cube_frame(cube_cols=(), sequence=seq), seq * 100000)
+        self.assertEqual(m.cubes, [])
 
 
 class MapQueryTests(unittest.TestCase):

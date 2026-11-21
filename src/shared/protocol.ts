@@ -11,6 +11,7 @@ import type { MatchState } from "../world/rules.ts";
 import type { ToFSnapshot } from "./vl53l5cx.ts";
 import type { CubeView } from "./push-pull.ts";
 import type { DiscoveryPacket } from "./discovery.ts";
+import type { CalibrationSetup } from "./calibration.ts";
 
 export const ST = { Idle: 0, Request: 1, Response: 2, Done: 3 } as const;
 
@@ -101,6 +102,8 @@ export interface WorldSnapshot {
   robots: RobotSnapshot[];
   match: MatchState;
   cubes?: CubeView[];
+  /** Push & Pull calibration: the crew's cube while it stands in the arena (window 3) */
+  calCube?: CubeView | null;
 }
 
 /** Conditions of the world, for robustness tests (all 1 = nominal) */
@@ -131,6 +134,8 @@ export interface LoadMessage {
   maxTime?: number;
   tweaks?: WorldTweaks;
   cubes?: Pose[];
+  /** Push & Pull: play the crew's calibration windows before the start (null / missing = skip) */
+  calibration?: CalibrationSetup | null;
 }
 
 export type ToWorld =

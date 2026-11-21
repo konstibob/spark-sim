@@ -33,6 +33,11 @@ def flush():
         fire_due()
 
 
+def calibration_runs():
+    """Push & Pull: does this simulation play the crew's calibration windows? (spark_start.SIM_SKIP_CALIBRATION)"""
+    return _spark.calibration() == 1
+
+
 def rpc(op, *args):
     flush()
     return _spark.rpc(op, *args)

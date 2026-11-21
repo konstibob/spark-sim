@@ -3,8 +3,9 @@ export const VL53L5CX = {
   fovDeg: 45, // horizontal AND vertical detection volume, not the diagonal 65° marketing figure
   minMm: 20,
   maxMm: 4000,
-  // Assumed front mounting, metres in the chassis frame (x forward, y left, z up).
-  mount: [0.052, 0, 0.045] as const,
+  // Front mounting, metres in the chassis frame (x forward, y left, z up; z from the ground).
+  // Height measured: 9 cm on the robot. Forward offset is still assumed.
+  mount: [0.052, 0, 0.09] as const,
   samplesPerAxis: 3,
 } as const;
 

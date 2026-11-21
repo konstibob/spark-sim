@@ -149,7 +149,7 @@ const arena = { ...free, id: "tof-test-wall", mjcf: () => free.mjcf() +
 {
   const block = { ...free, id: "tof-occlusion", mjcf: () => free.mjcf() +
     '<geom name="far" type="box" pos="0.3 0 0.3" size="0.005 1 0.3" group="0"/>' +
-    '<geom name="near" type="box" pos="0.137 -0.032 0.097" size="0.005 0.003 0.003" group="0"/>' };
+    '<geom name="near" type="box" pos="0.137 -0.032 0.142" size="0.005 0.003 0.003" group="0"/>' };
   const w = new World(mj, block, [{ x: 0, y: 0, yaw: 0 }], { tof: [true], tweaks: { ...NOMINAL, noise: 0 } });
   w.advanceTo(67_000);
   const frame = w.robots[0].tof.frame!;
@@ -162,22 +162,25 @@ const arena = { ...free, id: "tof-test-wall", mjcf: () => free.mjcf() +
   mj.mj_forward(w.m, w.d);
   w.setToF(0, true);
   w.advanceTo(134_000);
-  assert(w.robots[0].tof.frame!.distanceMm.some((d) => d > 20 && d < 100));
+  // From 9 cm up the floor is ~11 cm away along the tilted axis, nearer than the far wall.
+  assert(w.robots[0].tof.frame!.distanceMm.slice(56).every((d) => d > 20 && d < 150));
   w.dispose();
 }
 console.log("ok   MuJoCo wall depth, shared robot/UI frame, yaw, tilt, off-centre target and occlusion");
 
 {
   const cubes = DEFAULT_CUBES.map((p) => ({ ...p }));
-  cubes[0] = { x: 0.2, y: 0, yaw: 0 };
+  cubes[0] = { x: 0.3, y: 0, yaw: 0 };
   const w = new World(mj, arenaById("push-pull"), [{ x: 0, y: 0, yaw: 0 }], {
     cubes, tof: [true], tweaks: { ...NOMINAL, noise: 0 },
   });
   w.judging = false;
   w.advanceTo(67_000);
   const frame = w.robots[0].tof.frame!;
-  assert.equal(frame.targetStatus[27], 5, "sensor sees the physical Push & Pull cube");
-  assert(Math.abs(frame.distanceMm[27] - 118) <= 2, `cube face should be 118 mm from the mount: ${frame.distanceMm[27]}`);
+  // Mount is 9 cm high, above the 6 cm cube: the cube appears in the lower rows (raw zone 51 looks ~14° down).
+  assert.equal(frame.targetStatus[51], 5, "sensor sees the physical Push & Pull cube");
+  assert(Math.abs(frame.distanceMm[51] - 218) <= 2, `cube face should be 218 mm from the mount: ${frame.distanceMm[51]}`);
+  assert(frame.distanceMm[27] === 0 || frame.distanceMm[27] > 300, "horizontal zones look over the cube");
   w.dispose();
   console.log("ok   Push & Pull cube geometry produces the expected depth");
 }

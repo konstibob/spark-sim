@@ -357,7 +357,7 @@ export class Rules {
       this.stuckAnchor = null;
       s.stuck = 0;
       const first = !s.rescues;
-      this.rescue(ev, `${r.name} stuck for ${STUCK_S} s: the referee frees it (−1 point). Stuck a second time ends the round.`);
+      this.rescue(ev, `${r.name} stuck for ${STUCK_S} s: the referee puts it back in the start square (−1 point). Stuck a second time ends the round.`);
       if (first) this.freeRequest = 0;
     }
   }

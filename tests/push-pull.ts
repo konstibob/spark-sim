@@ -76,10 +76,28 @@ export function checkPushPull(mj: Mujoco, check: (name: string, ok: boolean, det
     const w = new World(mj, arena, [{ x: 0.65, y: 0.2, yaw: 0 }], { proxThreshold: threshold, autoPressA: 0 });
     w.robots[0].cmd = [3000, 3000]; w.advanceTo(2_000_000);
     check("black walls contain robot", !w.robots[0].out && w.snapshot(1).robots[0].pos[0] < 0.8, `x=${w.snapshot(1).robots[0].pos[0].toFixed(3)} m`);
-    // still pushing against the wall at 10 s after the start: the referee frees it towards the centre
-    w.advanceTo(11_500_000);
-    const p = w.snapshot(1).robots[0].pos;
-    check("stuck at wall is freed", w.rules.state.rescues === 1 && w.rules.state.penalties === 1 && p[0] < 0.65, `rescues ${w.rules.state.rescues}, x=${p[0].toFixed(3)} m`);
+    // still pushing against the wall 10 s after the start: the referee lifts it (line sensors see nothing) and
+    // sets it down in the start square, facing the start direction
+    w.robots[0].cmd = [0, 0];
+    w.advanceTo(10_900_000);
+    const air = w.snapshot(1).robots[0].pos;
+    const line = w.readLine(w.robots[0], true);
+    check("freed robot is carried", !!w.robots[0].held && Math.hypot(air[0], air[1]) < 0.01 && line.every((v) => v >= 1000), `at (${air[0].toFixed(3)}, ${air[1].toFixed(3)}) z=${air[2].toFixed(3)}, line ${line.join(",")}`);
+    w.advanceTo(12_000_000);
+    const p = w.snapshot(1).robots[0];
+    {
+      // a cube already lies in the start square: the referee sets the robot down next to it
+      const layout = DEFAULT_CUBES.map((c) => ({ ...c }));
+      layout[0] = { x: 0.02, y: 0, yaw: 0 };
+      const busy = new World(mj, arena, [{ x: 0.5, y: 0.5, yaw: 0 }], { proxThreshold: threshold, cubes: layout, autoPressA: 0 });
+      busy.free(0);
+      busy.advanceTo(1_500_000);
+      const q = busy.snapshot(1).robots[0].pos;
+      const c = busy.snapshot(1).cubes![0].pos;
+      check("freed next to a cube in the start square", Math.hypot(q[0] - c[0], q[1] - c[1]) > 0.1 && Math.hypot(q[0], q[1]) < 0.2, `robot (${q[0].toFixed(3)}, ${q[1].toFixed(3)}), cube (${c[0].toFixed(3)}, ${c[1].toFixed(3)})`);
+      busy.dispose();
+    }
+    check("stuck at wall is freed into the start square", w.rules.state.rescues === 1 && w.rules.state.penalties === 1 && !w.robots[0].held && Math.hypot(p.pos[0], p.pos[1]) < 0.01 && Math.abs(p.yaw) < 1, `rescues ${w.rules.state.rescues}, at (${p.pos[0].toFixed(3)}, ${p.pos[1].toFixed(3)}) yaw ${p.yaw.toFixed(1)}°`);
     w.dispose();
   }
   {

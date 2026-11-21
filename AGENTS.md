@@ -36,6 +36,9 @@ touching −1. No radio on the robot, no remote control, only shop parts, max 50
   0.35, IR reflectance cube 0.95 / wall 0.04 / tape 0.04 / floor 0.9, ESP board +8 g. Say so when a result
   depends on the assumptions. Teammates are measuring the real sensors; measured numbers go into `src/shared/push-pull.ts`, `src/shared/zumo-spec.ts`
   and `src/world/world.ts`.
+- Stuck rule in the sim: within 3 cm and under 30° of turning for 10 s = stuck. The first time costs −1 and the
+  referee lifts the robot (1 s, line sensors read 1024) and puts it back in the start square in the start
+  direction; the second time ends the round. A good program notices the lift and localises again from the start pose.
 - Don't recommend the ESP32 bridge for the event: an ESP32 with Wi-Fi/Bluetooth is forbidden by the rules.
 - Keep the simulator deterministic per seed. A new random source must come from the seed.
 

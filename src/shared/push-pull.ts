@@ -127,33 +127,15 @@ export function cubeFootprint(cube: CubeView): Point[] {
   return [...half(pts), ...half([...pts].reverse())];
 }
 
-const area = (pts: Point[]) => Math.abs(pts.reduce((sum, p, i) => {
-  const q = pts[(i + 1) % pts.length];
-  return sum + p[0] * q[1] - p[1] * q[0];
-}, 0)) / 2;
-
 /** Scoring zones: the inner size plus the tape on both sides (a cube on the tape still counts). */
 export const ZONE = { small: PUSH_PULL.small + 2 * PUSH_PULL.tape, home: PUSH_PULL.home + 2 * PUSH_PULL.tape } as const;
 
+/** 3 = completely within the small zone, 1 = completely within the home zone, else 0. */
 export function cubePoints(cube: CubeView): 0 | 1 | 3 {
-  const footprint = cubeFootprint(cube);
   // A cube lifted off the board / stacked above another is not lying in the square.
   if (cube.pos[2] > 0.02 + PUSH_PULL.cube || cube.pos[2] < 0) return 0;
-  if (footprint.every(([x, y]) => Math.abs(x) <= ZONE.small / 2 + 1e-7 && Math.abs(y) <= ZONE.small / 2 + 1e-7)) return 3;
-  let clipped = footprint;
-  for (const axis of [0, 1]) for (const sign of [-1, 1]) {
-    const input = clipped;
-    clipped = [];
-    input.forEach((a, i) => {
-      const b = input[(i + 1) % input.length];
-      const da = ZONE.home / 2 - sign * a[axis];
-      const db = ZONE.home / 2 - sign * b[axis];
-      if (da >= 0) clipped.push(a);
-      if ((da >= 0) !== (db >= 0)) {
-        const t = da / (da - db);
-        clipped.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
-      }
-    });
-  }
-  return area(clipped) + 1e-10 >= area(footprint) / 2 ? 1 : 0;
+  const footprint = cubeFootprint(cube);
+  const within = (size: number) => footprint.every(([x, y]) => Math.abs(x) <= size / 2 + 1e-7 && Math.abs(y) <= size / 2 + 1e-7);
+  if (within(ZONE.small)) return 3;
+  return within(ZONE.home) ? 1 : 0;
 }

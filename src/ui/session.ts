@@ -43,6 +43,7 @@ export interface MatchSetup {
   headless?: boolean;
   maxTime?: number;
   tweaks?: WorldTweaks;
+  cubes?: Pose[];
 }
 
 export interface HostEvents {
@@ -113,6 +114,7 @@ export class MatchHost {
       headless: s.headless,
       maxTime: s.maxTime,
       tweaks: s.tweaks,
+      cubes: s.cubes,
       robots: s.robots.map((r, slot) => ({
         setup: { slot, name: r.name, pose: poses[slot % poses.length], code: s.run ? r.code : "" },
         buffers: buffers[slot],
@@ -173,6 +175,10 @@ export class MatchHost {
 
   setSpeed(speed: number) {
     this.send({ type: "speed", speed });
+  }
+
+  referee(action: "rescue" | "touch" | "finish") {
+    this.send({ type: "referee", action });
   }
 
   press(slot: number, button: "A" | "B" | "C", down: boolean) {

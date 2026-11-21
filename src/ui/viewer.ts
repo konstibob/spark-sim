@@ -4,6 +4,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { Arena } from "../shared/arenas.ts";
 import type { WorldSnapshot } from "../shared/protocol.ts";
 import { ZUMO } from "../shared/zumo-spec.ts";
+import { PUSH_PULL } from "../shared/push-pull.ts";
 import { PixelPass, type PixelMode } from "./pixel.ts";
 
 const Z = ZUMO;
@@ -76,6 +77,7 @@ export class Viewer {
   private robots: RobotView[] = [];
   private arenaMesh: THREE.Object3D | null = null;
   private arena: Arena | null = null;
+  private cubes: THREE.Mesh[] = [];
   private overlayOn = true;
   private selected = 0;
   private last: WorldSnapshot | null = null;
@@ -257,8 +259,31 @@ export class Viewer {
       box.castShadow = true;
       mesh = box;
     }
-    this.arenaMesh = mesh;
-    this.scene.add(mesh);
+    const group = new THREE.Group();
+    group.add(mesh);
+    this.cubes = [];
+    if (arena.mode === "push-pull") {
+      const P = PUSH_PULL;
+      const mat = new THREE.MeshStandardMaterial({ color: 0x111217, roughness: 0.9 });
+      for (const s of [-1, 1]) for (const axis of [0, 1]) {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(axis === 0 ? P.wallThickness : P.size, axis === 0 ? P.size + 2 * P.wallThickness : P.wallThickness, P.wallHeight), mat);
+        wall.position.set(axis === 0 ? s * (P.size / 2 + P.wallThickness / 2) : 0, axis === 1 ? s * (P.size / 2 + P.wallThickness / 2) : 0, arena.surfaceZ + P.wallHeight / 2);
+        wall.castShadow = wall.receiveShadow = true;
+        group.add(wall);
+      }
+      for (const p of arena.cubes ?? []) {
+        const cube = new THREE.Mesh(new THREE.BoxGeometry(P.cube, P.cube, P.cube), new THREE.MeshStandardMaterial({ color: 0xdceaf6, metalness: 0.45, roughness: 0.22 }));
+        cube.position.set(p.x, p.y, arena.surfaceZ + P.cube / 2);
+        cube.rotation.z = p.yaw;
+        cube.castShadow = cube.receiveShadow = true;
+        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(cube.geometry), new THREE.LineBasicMaterial({ color: 0x50667e }));
+        cube.add(edges);
+        this.cubes.push(cube);
+        group.add(cube);
+      }
+    }
+    this.arenaMesh = group;
+    this.scene.add(group);
     // a new arena: the camera shows all of it
     if (!this.following) this.view("side");
   }
@@ -466,6 +491,12 @@ export class Viewer {
 
   update(snap: WorldSnapshot) {
     this.last = snap;
+    snap.cubes?.forEach((s, i) => {
+      const cube = this.cubes[i];
+      if (!cube) return;
+      cube.position.set(...s.pos);
+      cube.quaternion.set(s.quat[1], s.quat[2], s.quat[3], s.quat[0]);
+    });
     snap.robots.forEach((s, i) => {
       const r = this.robots[i];
       if (!r) return;

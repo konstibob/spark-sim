@@ -15,6 +15,7 @@ export interface BenchConfig {
   maxTime: number;
   baseSeed: number;
   tweaks?: WorldTweaks;
+  cubes?: Pose[];
 }
 
 export interface BenchMatch {
@@ -74,8 +75,8 @@ export function benchMaxTime(arena: ReturnType<typeof arenaById>): number {
 export function benchMatchSetup(cfg: BenchConfig, index: number) {
   const arena = arenaById(cfg.arena);
   const seed = (cfg.baseSeed + index * 7919) >>> 0;
-  const swapped = cfg.b !== null && index % 2 === 1;
-  const robots = cfg.b ? (swapped ? [cfg.b, cfg.a] : [cfg.a, cfg.b]) : [cfg.a];
+  const swapped = cfg.b !== null && arena.maxRobots > 1 && index % 2 === 1;
+  const robots = cfg.b && arena.maxRobots > 1 ? (swapped ? [cfg.b, cfg.a] : [cfg.a, cfg.b]) : [cfg.a];
   const poses = jitteredStarts(arena, robots.length, seed, arena.mode === "race" ? cfg.jitter * 0.25 : cfg.jitter);
   return { seed, swapped, robots, poses };
 }
@@ -88,6 +89,7 @@ export interface Job {
   poses: Pose[];
   maxTime: number;
   tweaks?: WorldTweaks;
+  cubes?: Pose[];
 }
 
 export class BenchRunner {
@@ -137,10 +139,11 @@ export class BenchRunner {
   }
 
   async run(cfg: BenchConfig, onMatch: (m: BenchMatch, done: number) => void): Promise<BenchMatch[]> {
+    if (arenaById(cfg.arena).maxRobots === 1) cfg = { ...cfg, b: null };
     const results: BenchMatch[] = [];
     const jobs = Array.from({ length: cfg.count }, (_, index) => {
       const { seed, swapped, robots, poses } = benchMatchSetup(cfg, index);
-      return { arena: cfg.arena, robots, seed, poses, maxTime: cfg.maxTime, tweaks: cfg.tweaks, index, swapped };
+      return { arena: cfg.arena, robots, seed, poses, maxTime: cfg.maxTime, tweaks: cfg.tweaks, cubes: cfg.cubes, index, swapped };
     });
     await this.runJobs(jobs, (job, match, _t, done) => {
       const sA = job.swapped ? 1 : 0;

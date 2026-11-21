@@ -111,6 +111,7 @@ function load(m: LoadMessage) {
       names: m.robots.map((r) => r.setup.name),
       autoPressA: m.autoPressA,
       tweaks: m.tweaks,
+      cubes: m.cubes,
     },
   );
   for (const r of m.robots) if (r.setup.code.trim()) world.attach(r.setup.slot, openChannel(r.buffers));
@@ -154,6 +155,13 @@ self.onmessage = async (e: MessageEvent<ToWorld>) => {
         break;
       case "start":
         world?.startSignal();
+        break;
+      case "referee":
+        if (world) {
+          for (const e of world.rules.referee(m.action)) world.events.push({ ...e, t: world.tUs / 1e6 });
+          flushEvents();
+          post({ type: "snapshot", snap: world.snapshot(0), id: loadId });
+        }
         break;
       case "halt":
         // Stop: programs off, motors off, and the match is over (no more scoring or time limit)

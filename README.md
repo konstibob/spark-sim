@@ -28,6 +28,44 @@ Headless match without a browser (deterministic per seed):
 npx tsx tests/match.ts src/examples/sumo_starter.py --arena dohyo --press A@0.2 --seed 7
 ```
 
+## Challenge 2: Push & Pull
+
+Open `http://127.0.0.1:5173/?arena=push-pull` after `npm run dev -- --host 127.0.0.1`.
+The arena has a **160 × 160 cm clear floor**, **10 cm black walls**, centred **30 × 30 cm**
+and **12 × 12 cm** tape squares, and five reflective **6 cm cubes** with MuJoCo collisions.
+The tape marks the outside of each square; the labelled dimensions are the clear scoring area.
+
+- **Arena-Karte** opens the scaled map. Drag cubes or enter coordinates in cm (origin at the
+  centre, +x right, +y up); zoom into the centre. Save/load a layout as JSON. Changes persist in
+  this browser; Run and Reset use the same starting cube positions. Example positions are
+  illustrative: the referee's actual layout is unknown.
+- Select the **Push & Pull · one-cube demo** example, then **Start** (or Run, then hardware A).
+  A starts immediately, with **no sumo countdown**. The demo drives behind the first example
+  cube and pushes it into the big square. It uses known example waypoints and encoder/gyro
+  odometry; adapt it for another layout. Your own MicroPython uses the normal robot APIs.
+- Scoring is live, from each cube's rotated footprint: **3 points** completely within the
+  small square, otherwise **1 point** for at least half within the big square. Four cubes fit
+  exactly in the small square: **maximum 13 points**. The score freezes after **120 seconds**
+  or two green LED pulses 0.1–2 seconds apart. A steady green LED does not finish a round.
+- **Test bench** runs the current program alone on this same saved layout across seeds and
+  reports average scores; each result can be replayed.
+- Referee actions are in the map's **Modell & Schiedsrichter** section: first rescue −1,
+  second rescue ends the round, touching −1 and ends the round. Leaving the arena costs −2
+  and ends it. Judge the 10 seconds stuck yourself. Early motor commands produce a warning;
+  official first-false-start restarts and second-false-start disqualification are manual.
+
+Assumptions to calibrate: **1 cm tape width, 60 g cube mass, cube friction 0.35** and approximate
+IR reflectance (cube 0.95, black wall 0.04). These values are in `src/shared/push-pull.ts` and
+`src/world/world.ts`. The default robot pushes with its blade; it has no pulling attachment.
+
+Headless demo (same physics and MicroPython as the browser):
+
+```bash
+npx tsx tests/match.ts src/examples/push_pull.py --arena push-pull --press A@0.2 --seconds 121 --seed 7
+# Optional: use a JSON layout exported from Arena-Karte:
+npx tsx tests/match.ts your_program.py --arena push-pull --map push-pull-map.json --press A@0.2 --seconds 121
+```
+
 ## Self-hosting
 
 ```bash
@@ -85,6 +123,18 @@ Arenas, scoring, bots, docs and branding are **registries**. A deployment can ad
 touching the core — e.g. `registerArena(id, factory)` (`src/shared/arenas.ts`),
 `registerRuleHandler(mode, fn)` (`src/world/rules.ts`) and `setBrand(...)` (`src/ui/brand.ts`). This is how
 an event can keep its competition arenas, opponent bots and theme in a private layer while the core stays open.
+
+## Workflow
+
+We work in the fork [konstibob/spark-sim](https://github.com/konstibob/spark-sim). All branches and pull
+requests go into its `main` — not into the upstream [spark-hpi/spark-sim](https://github.com/spark-hpi/spark-sim).
+
+```bash
+git remote -v                     # origin = konstibob/spark-sim, upstream = spark-hpi/spark-sim
+git push -u origin HEAD           # push your branch to the fork
+gh pr create --repo konstibob/spark-sim --base main
+git pull upstream main            # pick up upstream changes when needed
+```
 
 ## Licence
 

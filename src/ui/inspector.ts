@@ -11,6 +11,7 @@ const MODE_TITLE: Record<string, string> = {
   koth: "King of the hill",
   shuttle: "Shuttle",
   free: "Free practice",
+  "push-pull": "Push & Pull",
 };
 
 function clock(t: number) {
@@ -67,7 +68,7 @@ export function renderScoreboard(match: MatchState | undefined, names: string[],
   if (match.ended) {
     const res = document.createElement("div");
     res.className = "sb-result";
-    res.textContent = match.winner === null ? `Draw — ${match.reason}` : `${names[match.winner] ?? "?"} wins`;
+    res.textContent = match.mode === "push-pull" ? `${match.scores[0]} Punkte · ${match.reason}` : match.winner === null ? `Draw — ${match.reason}` : `${names[match.winner] ?? "?"} wins`;
     el.append(res);
   }
 }

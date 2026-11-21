@@ -1,0 +1,56 @@
+import { arenaById, jitteredStarts } from "../src/shared/arenas.ts";
+import { cubePoints, DEFAULT_CUBES, validCubeLayout, type CubeView } from "../src/shared/push-pull.ts";
+import { Rules, type RobotView } from "../src/world/rules.ts";
+import { World, type Mujoco } from "../src/world/world.ts";
+
+export function checkPushPull(mj: Mujoco, check: (name: string, ok: boolean, detail: string) => void) {
+  const arena = arenaById("push-pull");
+  const cube = (x: number, y: number, yaw = 0): CubeView => ({ pos: [x, y, 0.05], quat: [Math.cos(yaw / 2), 0, 0, Math.sin(yaw / 2)] });
+  const robot: RobotView = { x: 0, y: 0, z: 0.02, moving: false, out: false, name: "Zumo" };
+  check("push-pull geometry", arena.shape.kind === "slab" && arena.shape.w === 1.6 && arena.maxRobots === 1 && arena.timeLimit === 120 && arena.cubes?.length === 5, "160 cm / five cubes / solo / 120 s");
+  check("push-pull tape", arena.reflect(0.065, 0) < 0.1 && arena.reflect(0.155, 0) < 0.1 && arena.reflect(0.4, 0) > 0.8, "black outlines, light floor elsewhere");
+  check("four cubes fit", [-0.03, 0.03].flatMap((x) => [-0.03, 0.03].map((y) => cubePoints(cube(x, y)))).every((n) => n === 3), "four 6 cm cubes exactly within 12 cm");
+  check("score at boundaries", cubePoints(cube(0.03, 0)) === 3 && cubePoints(cube(0.031, 0)) === 1 && cubePoints(cube(0.15, 0)) === 1 && cubePoints(cube(0.151, 0)) === 0, "fully inside / slightly outside / exactly half / under half");
+  check("rotated cube area", cubePoints(cube(0.15, 0, Math.PI / 4)) === 1 && cubePoints(cube(0.151, 0, Math.PI / 4)) === 0 && cubePoints(cube(0.03, 0.03, Math.PI / 4)) === 1, "rotation-aware clipping, not centre-only scoring");
+  check("map validation", validCubeLayout(DEFAULT_CUBES) && !validCubeLayout(DEFAULT_CUBES.map(() => ({ x: 0, y: 0, yaw: 0 }))) && !validCubeLayout([{ x: 2, y: 0, yaw: 0 }, ...DEFAULT_CUBES.slice(1)]), "reject overlaps and cubes outside walls");
+  check("fixed referee start", jitteredStarts(arena, 1, 12)[0].x === 0 && jitteredStarts(arena, 1, 32)[0].yaw === 0, "no random movement outside the 12 cm square");
+  const scoring = new Rules(arena, 1);
+  scoring.signal(0.2);
+  const packed = [-0.03, 0.03].flatMap((x) => [-0.03, 0.03].map((y) => cube(x, y))).concat(cube(0.12, 0));
+  scoring.step(0.3, 0.1, [robot], packed);
+  check("immediate A and 13 points", scoring.state.phase === "running" && Math.abs(scoring.state.t - 0.1) < 1e-8 && scoring.state.scores[0] === 13, "no sumo countdown; four small + one home");
+  scoring.step(120.2, 119.9, [robot], packed);
+  scoring.step(121, 0.8, [robot], []);
+  check("120 s ends and freezes score", scoring.state.ended && scoring.state.scores[0] === 13 && scoring.state.t <= 120.001, scoring.state.reason);
+  const blink = new Rules(arena, 1); blink.signal(0);
+  blink.step(1, 1, [{ ...robot, green: true }], [cube(0.1, 0)]);
+  check("steady green does not finish", !blink.state.ended, "requires blinking");
+  blink.step(1.25, 0.25, [robot]); blink.step(1.5, 0.25, [{ ...robot, green: true }]);
+  check("green blinking finishes", blink.state.ended, blink.state.reason);
+  const rescue = new Rules(arena, 1); rescue.signal(0); rescue.step(1, 1, [robot], packed); rescue.referee("rescue");
+  check("rescue penalty", rescue.state.scores[0] === 12 && !rescue.state.ended, "first rescue −1");
+  rescue.referee("rescue"); check("second rescue ends", rescue.state.ended && rescue.state.scores[0] === 12, rescue.state.reason);
+
+  const threshold = World.calibrateProx(mj, arena);
+  {
+    const w = new World(mj, arena, [{ x: 0.65, y: 0.2, yaw: 0 }], { proxThreshold: threshold, autoPressA: 0 });
+    w.robots[0].cmd = [3000, 3000]; w.advanceTo(2_000_000);
+    check("black walls contain robot", !w.robots[0].out && w.snapshot(1).robots[0].pos[0] < 0.8, `x=${w.snapshot(1).robots[0].pos[0].toFixed(3)} m`);
+    w.dispose();
+  }
+  {
+    const layout = DEFAULT_CUBES.map((p) => ({ ...p })); layout[0] = { x: 0.2, y: 0, yaw: 0 };
+    const w = new World(mj, arena, [{ x: 0, y: 0, yaw: 0 }], { proxThreshold: threshold, cubes: layout, autoPressA: 0 });
+    const before = w.snapshot(1).cubes![0].pos[0];
+    const reflective = w.readProx(w.robots[0], false);
+    w.robots[0].cmd = [1800, 1800]; w.advanceTo(1_800_000);
+    const after = w.snapshot(1).cubes![0].pos[0];
+    check("physical cube pushing", after > before + 0.05, `${before.toFixed(3)} → ${after.toFixed(3)} m`);
+    check("reflective cube sensed", Math.max(...reflective) > 0, reflective.join(","));
+    w.dispose();
+    const wall = new World(mj, arena, [{ x: 0.58, y: 0.2, yaw: 0 }], { proxThreshold: threshold });
+    const dark = wall.readProx(wall.robots[0], false);
+    check("cube brighter than black wall", Math.max(reflective[2], reflective[3]) > Math.max(dark[2], dark[3]), `cube ${reflective[2]}/${reflective[3]}, wall ${dark[2]}/${dark[3]}`);
+    wall.dispose();
+  }
+}

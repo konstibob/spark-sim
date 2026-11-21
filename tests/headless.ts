@@ -3,6 +3,7 @@
 import loadMujoco from "mujoco";
 import { arenaById } from "../src/shared/arenas.ts";
 import { World } from "../src/world/world.ts";
+import { checkPushPull } from "./push-pull.ts";
 
 // Load the private competition overlay if it is checked out (admin), so its arenas/scoring are registered.
 // The public build has no overlay/, so the few tests that need its arenas are skipped (see `hasOverlay`).
@@ -159,5 +160,6 @@ if (hasOverlay) {
   w.dispose();
 }
 
+checkPushPull(mj, check);
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks ok");
 process.exit(failures ? 1 : 0);

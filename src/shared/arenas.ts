@@ -7,7 +7,9 @@ export interface Pose {
   yaw: number;
 }
 
-export type Mode = "sumo" | "race" | "koth" | "shuttle" | "free";
+import { DEFAULT_CUBES, PUSH_PULL } from "./push-pull.ts";
+
+export type Mode = "sumo" | "race" | "koth" | "shuttle" | "free" | "push-pull";
 
 export interface Arena {
   id: string;
@@ -39,6 +41,7 @@ export interface Arena {
   /** race: areas a robot must visit (any order) between two finish crossings for the lap to count */
   checkpoints?: { x0: number; y0: number; x1: number; y1: number }[];
   laps?: number;
+  cubes?: readonly Pose[];
 }
 
 // Palette + helpers, also used by overlay arenas (registered via registerArena).
@@ -212,6 +215,31 @@ registerArena("dohyo", () => dohyo(false));
 registerArena("dohyo-inverse", () => dohyo(true));
 registerArena("line", lineTrack);
 registerArena("free", free);
+registerArena("push-pull", () => {
+  const P = PUSH_PULL;
+  const z = 0.02;
+  const onTape = (x: number, y: number) => [P.small, P.home].some((size) => {
+    const d = Math.max(Math.abs(x), Math.abs(y));
+    return d >= size / 2 && d <= size / 2 + P.tape;
+  });
+  return {
+    id: "push-pull", name: "Challenge 2 · Push & Pull", mode: "push-pull",
+    blurb: "160 × 160 cm · black 10 cm walls · 30 × 30 cm home · 12 × 12 cm start · five 6 cm cubes · button A · 120 s.",
+    surfaceZ: z,
+    extent: { x0: -0.8, y0: -0.8, x1: 0.8, y1: 0.8 },
+    reflect: (x, y) => onTape(x, y) ? R_BLACK : R_WHITE,
+    color: (x, y) => onTape(x, y) ? BLACK : WHITE,
+    mjcf: () => slabMjcf(P.size, P.size, z) + [-1, 1].flatMap((s) => [
+      `<geom name="wall_x${s}" type="box" size="${P.wallThickness / 2} ${P.size / 2 + P.wallThickness} ${P.wallHeight / 2}" pos="${s * (P.size / 2 + P.wallThickness / 2)} 0 ${z + P.wallHeight / 2}" group="0"/>`,
+      `<geom name="wall_y${s}" type="box" size="${P.size / 2} ${P.wallThickness / 2} ${P.wallHeight / 2}" pos="0 ${s * (P.size / 2 + P.wallThickness / 2)} ${z + P.wallHeight / 2}" group="0"/>`,
+    ]).join(""),
+    shape: { kind: "slab", w: P.size, h: P.size, height: z },
+    starts: [{ x: 0, y: 0, yaw: 0 }], maxRobots: 1,
+    isOut: (x, y, height) => Math.abs(x) > 0.85 || Math.abs(y) > 0.85 || height < z - 0.006,
+    timeLimit: 120,
+    cubes: DEFAULT_CUBES,
+  };
+});
 
 /** Older ids (stored in browsers / scripts) */
 const ALIASES: Record<string, string> = { "dohyo-invers": "dohyo-inverse", linie: "line" };
@@ -223,6 +251,8 @@ export function arenaById(id: string): Arena {
 
 /** Start poses with a deterministic random jitter (for fair test benches). */
 export function jitteredStarts(arena: Arena, count: number, seed: number, amount = 1): Pose[] {
+  // The referee always places the solo robot in the same small square and direction.
+  if (arena.mode === "push-pull") return arena.starts.slice(0, count).map((p) => ({ ...p }));
   let s = seed >>> 0 || 1;
   const rnd = () => {
     s = (Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0;

@@ -11,6 +11,7 @@ import { arenaById, jitteredStarts, type Pose } from "../src/shared/arenas.ts";
 import { C, makeBell, makeChannelBuffers, openChannel, type FromRobot } from "../src/shared/protocol.ts";
 import type { MatchState } from "../src/world/rules.ts";
 import { World } from "../src/world/world.ts";
+import { validCubeLayout } from "../src/shared/push-pull.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -59,18 +60,20 @@ export interface MatchOptions {
   stopWhenOut?: boolean;
   /** stop when the rules have decided the match (default true) */
   stopWhenDecided?: boolean;
+  cubes?: Pose[];
 }
 
 export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
   const mj = await loadMujoco();
   const arena = arenaById(opts.arena ?? "dohyo");
+  if (opts.programs.length > arena.maxRobots) throw new Error(`${arena.name} supports ${arena.maxRobots} robot(s)`);
   const seed = opts.seed ?? 1;
   const threshold = World.calibrateProx(mj, arena);
   const poses =
     opts.poses ?? (opts.jitter ? jitteredStarts(arena, opts.programs.length, seed, opts.jitter) : opts.programs.map((_, i) => arena.starts[i]));
   const names = opts.programs.map((_, i) => opts.names?.[i] ?? `Robot ${i + 1}`);
   // presses are executed by the world at exact sim times (deterministic)
-  const world = new World(mj, arena, poses, { seed, proxThreshold: threshold, names, presses: opts.presses });
+  const world = new World(mj, arena, poses, { seed, proxThreshold: threshold, names, presses: opts.presses, cubes: opts.cubes });
   const bellSab = makeBell();
   const bell = new Int32Array(bellSab);
   const wasmUrl = join(root, "vendor/micropython/micropython.wasm");
@@ -188,12 +191,18 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   let seconds = 20;
   let seed = 1;
   let jitter = 0;
+  let cubes: Pose[] | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--arena") arena = args[++i];
     else if (a === "--seconds") seconds = Number(args[++i]);
     else if (a === "--seed") seed = Number(args[++i]);
     else if (a === "--jitter") jitter = Number(args[++i]);
+    else if (a === "--map") {
+      const map = JSON.parse(readFileSync(args[++i], "utf8"));
+      if (map.arena !== "push-pull" || map.units !== "metres" || !validCubeLayout(map.cubes)) throw new Error("Invalid Push & Pull map; export a layout from Arena-Karte (metres).");
+      cubes = map.cubes;
+    }
     else if (a === "--press") {
       const [b, t] = args[++i].split("@");
       presses.push({ button: b as "A" | "B" | "C", t: Number(t) });
@@ -202,7 +211,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       names.push(basename(a, ".py"));
     }
   }
-  const r = await runMatch({ programs, names, arena, seconds, seed, jitter, presses, echo: true, stopWhenOut: false });
+  const r = await runMatch({ programs, names, arena, seconds, seed, jitter, presses, cubes, echo: true, stopWhenOut: false });
   const m = r.match;
   console.log(`\nsim ${r.t.toFixed(2)} s in ${r.wallMs.toFixed(0)} ms (${((r.t * 1000) / r.wallMs).toFixed(1)}x real time)`);
   console.log(`result: ${m.ended ? (m.winner === null ? "draw" : `${names[m.winner]} wins`) : "undecided"} ${m.reason ? `(${m.reason})` : ""}`);

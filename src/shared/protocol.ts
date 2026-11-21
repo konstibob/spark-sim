@@ -8,6 +8,7 @@
 
 import type { Pose } from "./arenas.ts";
 import type { MatchState } from "../world/rules.ts";
+import type { CubeView } from "./push-pull.ts";
 
 export const ST = { Idle: 0, Request: 1, Response: 2, Done: 3 } as const;
 
@@ -26,6 +27,7 @@ export const OP = {
   Imu: 6, // -> acc xyz (g), gyro xyz (dps), mag xyz (gauss)
   Enc: 7, // -> left, right (counts since start)
   Battery: 8, // -> mV
+  Green: 9, // a = green LEDs on (1) / off or another colour (0), for Challenge 2's finish signal
 } as const;
 
 export interface RobotChannel {
@@ -90,6 +92,7 @@ export interface WorldSnapshot {
   realtime: number;
   robots: RobotSnapshot[];
   match: MatchState;
+  cubes?: CubeView[];
 }
 
 /** Conditions of the world, for robustness tests (all 1 = nominal) */
@@ -119,6 +122,7 @@ export interface LoadMessage {
   /** headless: stop after this many sim seconds even without a decision */
   maxTime?: number;
   tweaks?: WorldTweaks;
+  cubes?: Pose[];
 }
 
 export type ToWorld =
@@ -128,6 +132,7 @@ export type ToWorld =
   | { type: "place"; slot: number; x: number; y: number; yaw: number }
   | { type: "robotDone"; slot: number }
   | { type: "start" } // the start signal now: button A on every robot, 5 s countdown
+  | { type: "referee"; action: "rescue" | "touch" | "finish" }
   | { type: "halt" }; // all programs off, motors off, the match stops
 
 export interface WorldEvent {

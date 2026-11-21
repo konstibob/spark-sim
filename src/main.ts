@@ -27,6 +27,8 @@ import { applySettingsCss, DEFAULT_SETTINGS, EDITOR_MAX, EDITOR_MIN, loadSetting
 import { runTour } from "./ui/tour.ts";
 import { Telemetry } from "./ui/telemetry.ts";
 import { Viewer, type Theme } from "./ui/viewer.ts";
+import { PushPullMap } from "./ui/push-pull-map.ts";
+import { DEFAULT_CUBES, validCubeLayout } from "./shared/push-pull.ts";
 
 // Team colours from the spark-hpi.de palette (link blue, then the callout colours). Colour = slot position.
 const COLORS = ["#3a88fe", "#f59e0b", "#10b981", "#a78bfa"];
@@ -68,9 +70,16 @@ interface Slot {
   code: string; // your own code (kept even while a house bot is selected)
 }
 
-const starter = BOT_BY_ID["examples/sumo_starter.py"]?.code ?? "";
+let arenaId = arenaById(new URLSearchParams(location.search).get("arena") ?? String(store.get("arena", "push-pull"))).id;
+const starter = BOT_BY_ID[arenaId === "push-pull" ? "examples/push_pull.py" : "examples/sumo_starter.py"]?.code ?? "";
 const firstOpponent = BOTS.find((b) => b.category === "sumo"); // pre-fill robot 2 with an opponent, if any bots are registered
-let arenaId = arenaById(String(store.get("arena", "dohyo"))).id;
+const slotKey = () => arenaId === "push-pull" ? "slots-push-pull" : "slots-v2";
+const defaultSlots = (): Slot[] => [
+  { name: "My Zumo", source: CUSTOM, code: BOT_BY_ID[arenaId === "push-pull" ? "examples/push_pull.py" : "examples/sumo_starter.py"]?.code ?? "" },
+  ...(arenaId === "push-pull" ? [] : [{ name: firstOpponent?.name ?? "Robot 2", source: firstOpponent?.id ?? CUSTOM, code: "" }]),
+];
+const savedCubes = store.get<unknown>("push-pull-cubes", null);
+let cubeLayout: Pose[] = validCubeLayout(savedCubes) ? savedCubes : DEFAULT_CUBES.map((p) => ({ ...p }));
 /** stored values can be from older versions or edited by hand: keep only what makes sense */
 function loadSlots(raw: unknown): Slot[] {
   const list = (Array.isArray(raw) ? raw : [])
@@ -82,14 +91,9 @@ function loadSlots(raw: unknown): Slot[] {
       return { name, source, code };
     })
     .slice(0, arenaById(arenaId).maxRobots);
-  return list.length ? list : [{ name: "My Zumo", source: CUSTOM, code: starter }];
+  return list.length ? list : defaultSlots();
 }
-let slots: Slot[] = loadSlots(
-  store.get<unknown>("slots-v2", [
-    { name: "My Zumo", source: CUSTOM, code: starter },
-    { name: firstOpponent?.name ?? "Robot 2", source: firstOpponent?.id ?? CUSTOM, code: "" },
-  ]),
-);
+let slots: Slot[] = loadSlots(store.get<unknown>(slotKey(), defaultSlots()));
 let selected = 0;
 let speed = 1;
 /** give the start signal right after Run (off: the user gives it with ⚑ Start, like a referee) */
@@ -100,7 +104,7 @@ function loadTweaks(raw: unknown): WorldTweaks {
   return { ...NOMINAL, battery: num(r.battery, NOMINAL.battery, 0, 1), grip: num(r.grip, NOMINAL.grip, 0.5, 1.5), noise: num(r.noise, NOMINAL.noise, 0, 3) };
 }
 let tweaks: WorldTweaks = loadTweaks(store.get<unknown>("tweaks", {}));
-const saveSlots = () => store.set("slots-v2", slots);
+const saveSlots = () => store.set(slotKey(), slots);
 const codeOf = (s: Slot) => (s.source === CUSTOM ? s.code : (BOT_BY_ID[s.source]?.code ?? ""));
 
 /** What is on stage: normally the slots, or the robots of a bench match being watched */
@@ -240,7 +244,7 @@ const host = new MatchHost({
     if (e.kind === "out" || e.kind === "end" || e.kind === "lap" || e.kind === "point") buzzers.cue(e.kind);
     if (e.kind === "info" && e.text.startsWith("Start signal")) {
       buzzers.cue("signal");
-      showBanner("Start signal — the robots may move in 5 s", 2500);
+      showBanner(e.text, 2500);
     }
     if (e.kind === "info" && e.text === "Go!") {
       buzzers.cue("go");
@@ -303,6 +307,13 @@ const host = new MatchHost({
   },
 });
 
+const pushPullMap = new PushPullMap(() => cubeLayout, (poses) => {
+  cubeLayout = poses;
+  store.set("push-pull-cubes", poses);
+  load(false);
+}, (action) => host.referee(action));
+$("arena-map").onclick = () => pushPullMap.open();
+
 function setRunning(on: boolean) {
   running = on;
   if (!on) runState = runState.map((st) => (st === "run" ? "idle" : st));
@@ -320,7 +331,7 @@ let recording = false;
 
 function load(
   run: boolean,
-  opts: { seed?: number; poses?: Pose[]; robots?: RobotConfig[]; label?: string; startAt?: number | null; arena?: string; tweaks?: WorldTweaks } = {},
+  opts: { seed?: number; poses?: Pose[]; robots?: RobotConfig[]; label?: string; startAt?: number | null; arena?: string; tweaks?: WorldTweaks; cubes?: Pose[] } = {},
 ) {
   runId++;
   buzzers.stopAll();
@@ -338,6 +349,8 @@ function load(
   // an empty program never reports "done": count it as done right away
   if (run) robots.forEach((r, i) => !r.code.trim() && liveDone.add(i));
   const arena = arenaById(scene.arena);
+  $("arena-map").classList.toggle("hidden", arena.mode !== "push-pull");
+  if (arena.mode !== "push-pull") pushPullMap.dialog.close();
   viewer.setArena(arena);
   viewer.setRobots(robots.map((r, i) => ({ name: r.name, color: scene.colors[i] })));
   if (scene.fromSlots) selected = editorSlot;
@@ -355,7 +368,7 @@ function load(
   let poses = opts.poses;
   const byHand = !poses && scene.fromSlots && placed.some(Boolean);
   if (byHand) poses = robots.map((_, i) => placed[i] ?? arena.starts[i % arena.starts.length]);
-  void host.load({ arena: scene.arena, robots, seed, poses, autoPressA: startAt, run, tweaks: opts.tweaks ?? tweaks });
+  void host.load({ arena: scene.arena, robots, seed, poses, autoPressA: startAt, run, tweaks: opts.tweaks ?? tweaks, cubes: opts.cubes ?? cubeLayout });
   host.setSpeed(speed);
   setRunning(run && liveDone.size < robots.length);
   updateInspectorHead();
@@ -406,6 +419,7 @@ function drawTelemetry(cursorT: number | null, force: boolean) {
 let frameCounter = 0;
 function showFrame(s: WorldSnapshot, replay = false) {
   viewer.update(s);
+  if (s.match.mode === "push-pull") pushPullMap.update(s, !recording && !replay);
   // before Run the world is only a preview: no match clock
   $("simtime").textContent = !recording && !replay ? "ready" : `${s.t.toFixed(2)} s`;
   $("rtf").textContent = replay ? "replay" : !recording ? "press ▶ Run" : s.realtime > 0 ? `${s.realtime.toFixed(1)}× real time` : "paused";
@@ -420,12 +434,11 @@ function updateStartButton(s: WorldSnapshot | null) {
   const b = $<HTMLButtonElement>("start");
   const mode = arenaById(running ? scene.arena : arenaId).mode;
   const none = mode === "race" || mode === "free";
-  if (b.disabled !== none)
-    b.title = none
+  b.title = none
       ? mode === "race"
         ? "No start signal in the race: ▶ Run starts the robots, each robot's laps are timed from its first crossing of the start line"
         : "No start signal in free practice: ▶ Run starts the robots"
-      : "Start signal (S): button A on every robot like the referee's start; they may move 5 s later. Without a running match it starts one.";
+      : mode === "push-pull" ? "Taste A / S: sofort starten, 120 Sekunden, keine 5 Sekunden Wartezeit." : "Start signal (S): button A on every robot like the referee's start; they may move 5 s later. Without a running match it starts one.";
   b.disabled = none;
   b.classList.toggle("attention", !b.disabled && running && !!s && s.match.phase === "waiting");
 }
@@ -941,7 +954,15 @@ const arenaSel = $<HTMLSelectElement>("arena");
 for (const [id, make] of Object.entries(ARENAS)) arenaSel.add(new Option(make().name, id));
 arenaSel.value = arenaId;
 arenaSel.onchange = () => {
+  saveSlots();
+  const previousSolo = arenaId === "push-pull";
   arenaId = arenaSel.value;
+  // Solo practice has its own saved program; switching to it must never delete other robots' code.
+  if (previousSolo !== (arenaId === "push-pull")) {
+    slots = loadSlots(store.get<unknown>(slotKey(), defaultSlots()));
+    states.length = 0;
+    editorSlot = 0;
+  }
   store.set("arena", arenaId);
   const arena = arenaById(arenaId);
   // house bots made for another arena are swapped for this arena's default opponent
@@ -1136,6 +1157,7 @@ const bench = new BenchPanel($("bench"), {
   slots: () => slots.map((s) => ({ name: s.name, code: codeOf(s) })),
   arena: () => arenaId,
   tweaks: () => tweaks,
+  cubes: () => cubeLayout.map((p) => ({ ...p })),
   log: (text) => log(text, "sys"),
   watch(cfg, index) {
     const setup = benchMatchSetup(cfg, index);
@@ -1149,6 +1171,7 @@ const bench = new BenchPanel($("bench"), {
       startAt: 0.2,
       arena: cfg.arena,
       tweaks: cfg.tweaks ?? NOMINAL,
+      cubes: cfg.cubes,
     });
     showBanner(`Bench match ${index + 1}${cfg.arena !== arenaId ? ` on ${arenaById(cfg.arena).name}` : ""} — Reset returns to your robots`, 3500);
   },
@@ -1398,7 +1421,7 @@ function readingScroller(): HTMLElement | null {
 const tourOpen = () => !!document.querySelector(".tour-card");
 window.addEventListener("keydown", (ev) => {
   // handled already (the editor, a divider moved with the arrow keys, the docs search …) or the tour is open
-  if (ev.defaultPrevented || tourOpen()) return;
+  if (ev.defaultPrevented || tourOpen() || pushPullMap.dialog.open) return;
   const mod = ev.metaKey || ev.ctrlKey;
   if (ev.key === "F1") {
     ev.preventDefault();

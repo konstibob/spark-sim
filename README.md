@@ -139,6 +139,14 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   tape (35 × 35 cm). Four cubes fit with room to spare (**13 points**); five fit in theory, the
   middle one turned 45° (**15**). The score freezes after **120 seconds**
   or two green LED pulses 0.1–2 seconds apart. A steady green LED does not finish a round.
+- **▦ Runs** (toolbar, next to Reset; pick 1, 2, 4, 6, 9 or 16) runs the editor robot's program that
+  many times at once, each run in its own world with its own cube layout from its seed (or, with the
+  toggle, all on the Arena-Karte layout). The tiles show a live top view (cubes green = 3 points,
+  amber = 1 point), the right column the results as runs finish: mean, median, best/worst and a bar
+  chart of how many runs scored how many points. Click a tile (or best/worst) to watch that exact run
+  in 3D. The same runs on the command line:
+  `npm run runs -- prog.py --runs 16 --base-seed 1` (add `--map layout.json` for a fixed layout).
+  Every run ends at 120 s, with a green blink, stuck twice or leaving the arena.
 - **Test bench** runs the current program alone on this same saved layout across seeds and
   reports average scores; each result can be replayed.
 - Referee actions are in the map's **Modell & Schiedsrichter** section: first rescue −1,

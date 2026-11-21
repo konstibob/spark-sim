@@ -63,11 +63,13 @@ Run `npm test` and `npm run typecheck` before you say a change works.
 |---|---|
 | `src/shared/push-pull.ts` | Challenge 2 geometry, cube defaults, seeded layouts, scoring (`cubePoints`) |
 | `src/shared/arenas.ts` | Arena registry; `push-pull` arena (reflectance, MJCF walls) |
-| `src/world/rules.ts` | Rules per mode; Push & Pull start, 120 s limit, green blink, penalties |
+| `src/world/rules.ts` | Rules per mode; Push & Pull start, 120 s limit, green blink, penalties, stuck (`STUCK_*`) |
 | `src/world/world.ts` | Physics, motors, sensors (prox reflectance per material), lockstep scheduler |
 | `src/robot/python/` | Simulated `zumo_2040_robot`, `spark_start`, MicroPython runtime shims |
 | `src/examples/` | Example programs, auto-listed in the UI (header comments `# Name:` etc.) |
 | `src/ui/bench.ts`, `bench-panel.ts` | Parallel headless match pool (test bench) |
+| `src/shared/runs.ts` | Seeds, layouts and result summary shared by the Runs grid and `tests/runs.ts` |
+| `src/ui/runs-grid.ts` | ▦ Runs: N live worlds in a grid, results column with a points histogram |
 | `src/ui/push-pull-map.ts` | Arena-Karte: cube layout editor, seed, referee actions |
 | `src/ui/viewer.ts` | three.js 3D view |
 | `tests/push-pull.ts` | Push & Pull checks (part of `npm test`) |

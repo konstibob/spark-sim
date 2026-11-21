@@ -221,7 +221,8 @@ class Button:
     _index = 0
 
     def __init__(self):
-        self.last_event = self.is_pressed()
+        _rt.flush()
+        self.last_event = _spark.button(self._index, 1) == 1
         self.last_event_t = ticks_us()
         self.not_pressed_t = ticks_us()
         self.debounce_ms = 10

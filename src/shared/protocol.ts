@@ -10,11 +10,12 @@ import type { Pose } from "./arenas.ts";
 import type { MatchState } from "../world/rules.ts";
 import type { ToFSnapshot } from "./vl53l5cx.ts";
 import type { CubeView } from "./push-pull.ts";
+import type { DiscoveryPacket } from "./discovery.ts";
 
 export const ST = { Idle: 0, Request: 1, Response: 2, Done: 3 } as const;
 
 /** Indices in the Int32 control block */
-export const C = { State: 0, Op: 1, BtnA: 4, BtnB: 5, BtnC: 6 } as const;
+export const C = { State: 0, Op: 1, BtnA: 4, BtnB: 5, BtnC: 6, StartA: 7 } as const;
 export const CTL_LEN = 16;
 export const F64_LEN = 208; // clock + ToF metadata + 64 distances/statuses/target counts
 
@@ -88,6 +89,8 @@ export interface RobotSnapshot {
   tilt: number;
   out: boolean;
   tof?: ToFSnapshot;
+  /** Passive sensor-only inspector estimate; independent of the user's program. */
+  discovery?: DiscoveryPacket;
 }
 
 export interface WorldSnapshot {

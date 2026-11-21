@@ -1,5 +1,6 @@
 // Records everything the viewer shows (world frames, displays, LEDs, prints) so any moment can be inspected again.
 import type { WorldSnapshot } from "../shared/protocol.ts";
+import { discoveryScans, type DiscoveryPacket } from "../shared/discovery.ts";
 
 export interface Stamped<T> {
   t: number;
@@ -14,6 +15,8 @@ export class Recorder {
   private leds = new Map<number, Stamped<number[]>[]>();
   private yellow = new Map<number, Stamped<boolean>[]>();
   private prints = new Map<number, Stamped<Record<string, number>>[]>();
+  private discovery = new Map<number, Stamped<DiscoveryPacket>[]>();
+  private sensorDiscovery = new Map<number, Stamped<DiscoveryPacket>[]>();
 
   clear() {
     this.frames = [];
@@ -21,6 +24,8 @@ export class Recorder {
     this.leds.clear();
     this.yellow.clear();
     this.prints.clear();
+    this.discovery.clear();
+    this.sensorDiscovery.clear();
   }
 
   get start(): number {
@@ -54,6 +59,46 @@ export class Recorder {
   /** numbers printed by a program (plotter), see parsePrint() */
   addPrint(slot: number, t: number, values: Record<string, number>) {
     push(this.prints, slot, { t, v: values });
+  }
+
+  addDiscovery(slot: number, packet: DiscoveryPacket) {
+    const last = this.discovery.get(slot)?.at(-1)?.v;
+    const grid = packet.grid ?? (last && last.t <= packet.t && last.size === packet.size && last.cell === packet.cell ? last.grid : undefined);
+    push(this.discovery, slot, { t: packet.t, v: { ...packet, grid } });
+  }
+
+  addSensorDiscovery(slot: number, packet: DiscoveryPacket) {
+    if (this.sensorDiscovery.get(slot)?.at(-1)?.t === packet.t) return;
+    push(this.sensorDiscovery, slot, { t: packet.t, v: packet });
+  }
+
+  /** A program's own map takes precedence, including during replay. Never mix
+   * its coordinate frame/grid/path with the independent inspector estimate. */
+  private discoveryHistory(slot: number, t: number) {
+    const program = this.discovery.get(slot) ?? [];
+    return lastAtOrBefore(program, t) >= 0 ? program : this.sensorDiscovery.get(slot) ?? [];
+  }
+
+  discoveryAt(slot: number, t: number) {
+    const list = this.discoveryHistory(slot, t);
+    const index = lastAtOrBefore(list, t);
+    return index >= 0 ? list[index].v : null;
+  }
+
+  discoveryPath(slot: number, t: number): [number, number][] {
+    const list = this.discoveryHistory(slot, t);
+    const end = lastAtOrBefore(list, t);
+    const path: [number, number][] = [];
+    for (let i = 0; i <= end; i++) {
+      const [x, y] = list[i].v.pose;
+      const previous = path.at(-1);
+      if (!previous || Math.hypot(x - previous[0], y - previous[1]) > 0.008) path.push([x, y]);
+    }
+    return path;
+  }
+
+  discoveryScans(slot: number, t: number) {
+    return discoveryScans(this.discoveryHistory(slot, t).filter((p) => p.t <= t).map((p) => p.v));
   }
 
   printsBetween(slot: number, t0: number, t1: number): Stamped<Record<string, number>>[] {

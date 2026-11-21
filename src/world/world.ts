@@ -9,6 +9,7 @@ import { Rules } from "./rules.ts";
 import { ToFSensor } from "./vl53l5cx.ts";
 import { VL53L5CX } from "../shared/vl53l5cx.ts";
 import { ToFSerialBridge } from "./tof-serial.ts";
+import { SensorMapper } from "../shared/sensor-mapping.ts";
 import { cubeMasses, type CubeView, PUSH_PULL, validCubeLayout } from "../shared/push-pull.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,6 +119,8 @@ interface RobotState {
   tof: ToFSensor;
   tofSerial: ToFSerialBridge;
   tofRand: Rand; // separate stream: observing ToF never changes motors or other sensors' random values
+  discovery: SensorMapper | null;
+  discoveryRand: Rand;
   green: boolean;
   /** held in the air by the referee (stuck rule) until this sim time (µs), then set down at `pose` */
   held?: { pose: Pose; until: number } | null;
@@ -258,6 +261,8 @@ export class World {
         tof: new ToFSensor(),
         tofSerial: new ToFSerialBridge(),
         tofRand: new Rand(seed * 3571 + i * 65537 + 53),
+        discovery: null,
+        discoveryRand: new Rand(seed * 8191 + i * 131071 + 97),
         green: false,
       });
     });
@@ -302,7 +307,7 @@ export class World {
     for (const r of this.robots) r.restZ = this.d.qpos[r.freeQpos + 2] - arena.surfaceZ;
     this.proxThreshold = opt.proxThreshold ?? 1;
     this.rules = new Rules(arena, this.robots.length);
-    this.robots.forEach((r, i) => r.tof.enable(opt.tof?.[i] === true, 0));
+    this.robots.forEach((_, i) => this.setToF(i, opt.tof?.[i] === true));
   }
 
   dispose() {
@@ -434,6 +439,9 @@ export class World {
     if (this.rules.state.signal !== null) return;
     const t = this.tUs / 1e6;
     for (const e of this.rules.signal(t)) this.events.push({ ...e, t });
+    if (this.arena.mode === "push-pull") {
+      for (const r of this.robots) if (r.chan) Atomics.store(r.chan.ctl, C.StartA, 1);
+    }
     this.livePresses.push({ idx: C.BtnA, until: this.tUs + 100_000 });
   }
 
@@ -506,9 +514,23 @@ export class World {
     if (!r) return;
     r.tof.enable(enabled, this.tUs);
     r.tofSerial.reset();
+    if (enabled && !r.discovery) {
+      r.discovery = new SensorMapper();
+      this.sampleDiscovery(r);
+    }
+  }
+
+  /** Sample the same encoder/gyro models on a separate seeded noise stream.
+   * Never consume program sensor reads/UART bytes or change program scheduling.
+   */
+  private sampleDiscovery(r: RobotState) {
+    const gyro = this.d.sensordata[r.gyroAdr + 2] / DEG + r.gyroBias[2] * this.tweaks.noise
+      + r.discoveryRand.gauss(ZUMO.imuNoise.gyro * this.tweaks.noise);
+    r.discovery!.updateOdometry(this.tUs, this.readEncoders(r), gyro);
   }
 
   private updateToF(r: RobotState) {
+    if (r.discovery && this.tUs - r.discovery.sampledAtUs >= 10_000) this.sampleDiscovery(r);
     if (!r.tof.enabled || !r.tof.ranging) return;
     if (!r.tof.due(this.tUs)) return;
     // mj_step integrates qpos after computing xpos/xmat. Refresh for the current capture pose.
@@ -522,7 +544,15 @@ export class World {
       const p = origin.map((v, i) => v + direction[i] * hit.d);
       return { distance: hit.d, reflectance: this.reflectivity(hit.geom, p, this.normBuf.GetView()) };
     }, (sigma) => this.tweaks.noise === 0 ? 0 : r.tofRand.gauss(sigma * this.tweaks.noise));
-    if (r.tof.frame) r.tofSerial.publish(r.tof.frame, r.tof.resolution);
+    if (r.tof.frame) {
+      r.tofSerial.publish(r.tof.frame, r.tof.resolution);
+      if (r.discovery) {
+        if (r.discovery.sampledAtUs !== this.tUs) this.sampleDiscovery(r);
+        // Explicit projection: no capture pose or physics geometry enters mapping.
+        const { capturedAtUs, sequence, distanceMm, targetStatus, targetsDetected } = r.tof.frame;
+        r.discovery.observe({ capturedAtUs, sequence, distanceMm, targetStatus, targetsDetected });
+      }
+    }
   }
 
   /** 5 raw values like LineSensors.read(): small = bright, TIMEOUT = black / nothing below */
@@ -959,6 +989,7 @@ export class World {
         tilt: Math.acos(Math.max(-1, Math.min(1, R[b * 9 + 8]))) / DEG,
         out: r.out,
         tof: r.tof.snapshot(),
+        discovery: r.tof.enabled ? r.discovery?.packet() : undefined,
       };
     });
     return { t: this.tUs / 1e6, realtime, robots, match: structuredClone(this.rules.state), cubes: this.cubeViews() };

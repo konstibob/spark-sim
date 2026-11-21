@@ -151,6 +151,7 @@ export class MatchHost {
         seed: (s.seed * 31 + slot * 7) >>> 0,
         // the scheduled start signal: the robot sees button A from its own clock (deterministic)
         presses: s.autoPressA !== null ? [{ idx: C.BtnA, at: s.autoPressA * 1e6 }] : [],
+        latchStartA: arena.mode === "push-pull",
       };
       w.postMessage(job);
       this.robotWorkers[slot] = w;

@@ -130,6 +130,8 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   A starts immediately, with **no sumo countdown**. The demo drives behind the first example
   cube and pushes it into the big square. It uses known example waypoints and encoder/gyro
   odometry; adapt it for another layout. Your own MicroPython uses the normal robot APIs.
+  The simulator remembers a Push & Pull referee Start until the program first polls A, so imports
+  or calibration cannot lose an early Start click. Ordinary held/released hardware-button input is separate.
 - **Challenge 2 · team template** is the unchanged `challenge2.py` from team-green. The simulator ships its
   own `spark_start.py`, so the template's start block works here: `wait_for_start()` returns the moment
   button A (Start, key S, the bench, `--press A@t`) is pressed, like the Crew's IR start, with no 5 s practice
@@ -202,6 +204,17 @@ node deploy/serve-practice.mjs        # serves ./dist-practice on http://localho
 - **Optional VL53L5CX + ESP32-C6:** enable **VL53L5CX** above the 3D view for an 8×8 depth image,
   visible module, field grid and measured points on every arena. Includes a proposed UART JSONL bridge
   and MicroPython example. [Specifications, serial contract and simulation limits](docs/VL53L5CX.md).
+- **Robot view / Discovery Map:** enabling **VL53L5CX** automatically shows a labelled sensor estimate,
+  even with an ordinary program or in the stationary preview. Encoder/gyro odometry and raw ToF build
+  the pose, path, observed free space and obstacle hypotheses; the fallback does not perform scan matching.
+  **Robotersicht** follows the estimated heading. No true robot pose, cube positions or arena geometry
+  enter either map. The origin is assumed when observation starts; replay restores only past estimates.
+  A program publishing `@spark-map` telemetry takes precedence as a separate **Programmkarte**.
+  **Testskript laden** loads a fixed, editable forwards/turn/backwards sequence (Run, then A) using
+  portable `spark_mapping.py`, which also corrects odometry by matching scans against its own map.
+  There is no autonomous exploration, route choice or loop closure. For hardware, download
+  `spark_mapping.py` and `spark_tof.py` alongside the program using the Download menu.
+  **Messdaten exportieren** saves sensor-derived JSONL for offline SLAM comparisons.
 - **Test bench:** many headless matches in parallel → win rate with a confidence interval; watch any match again.
 - **Debugging:** a timeline to scrub every frame, telemetry strip charts, a plotter for your `print`s, a 3D
   sensor view, errors marked in the editor, autocompletion and in-app docs for the robot API.

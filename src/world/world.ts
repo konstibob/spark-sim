@@ -6,6 +6,7 @@ import { C, NOMINAL, OP, ST, type RobotChannel, type RobotSnapshot, type WorldEv
 import { COST_US, ZUMO } from "../shared/zumo-spec.ts";
 import { buildMjcf, DRIVEN } from "./mjcf.ts";
 import { Rules } from "./rules.ts";
+import { type CubeView, validCubeLayout } from "../shared/push-pull.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Mujoco = any;
@@ -63,7 +64,7 @@ class Rand {
   }
 }
 
-const GEOM = { world: 0, hull: 1, blade: 2, roller: 3, arena: 4, floor: 5 } as const;
+const GEOM = { world: 0, hull: 1, blade: 2, roller: 3, arena: 4, floor: 5, cube: 6 } as const;
 
 /** A request that takes time in the world: sampled at `sampleAt`, answered at `doneAt` (µs). */
 interface Deferred {
@@ -108,6 +109,7 @@ interface RobotState {
   started: boolean;
   /** chassis height above the surface at rest (measured after settling) */
   restZ: number;
+  green: boolean;
 }
 
 export interface WorldOptions {
@@ -120,12 +122,14 @@ export interface WorldOptions {
   presses?: { button: "A" | "B" | "C"; t: number }[];
   /** battery, grip and sensor noise for robustness tests */
   tweaks?: WorldTweaks;
+  cubes?: Pose[];
 }
 
 export class World {
   readonly m: Mujoco;
   readonly d: Mujoco;
   readonly robots: RobotState[] = [];
+  readonly cubeBodies: number[] = [];
   readonly rules: Rules;
   tUs = 0;
   proxThreshold: number;
@@ -166,7 +170,8 @@ export class World {
       const maxTilt = 2 * (gap - 0.00025); // the lower end stays 0.25 mm above the ground (also when pitching)
       return { bladeGap: gap, bladeTilt: Math.max(-maxTilt, Math.min(maxTilt, rnd.gauss(ZUMO.bladeTiltSpread))) };
     };
-    const xml = buildMjcf(arena, poses, poses.map((_, i) => ({ grip: this.tweaks.grip, ...blade(i) })));
+    const cubes = arena.cubes ? (validCubeLayout(opt.cubes) ? opt.cubes : arena.cubes) : [];
+    const xml = buildMjcf(arena, poses, poses.map((_, i) => ({ grip: this.tweaks.grip, ...blade(i) })), cubes);
     try {
       mj.FS.mkdir("/spark");
     } catch {
@@ -192,6 +197,7 @@ export class World {
       return i;
     };
     const m = this.m;
+    cubes.forEach((_, i) => this.cubeBodies.push(id("mjOBJ_BODY", `cube${i}`)));
     this.arenaGeom = id("mjOBJ_GEOM", "arena");
     const floorGeom = id("mjOBJ_GEOM", "floor");
     this.geomKind = new Int8Array(m.ngeom);
@@ -231,6 +237,7 @@ export class World {
         lastAlive: 0,
         started: false,
         restZ: 0.0005,
+        green: false,
       });
     });
 
@@ -248,6 +255,7 @@ export class World {
       this.geomRobot[g] = robot;
       if (g === this.arenaGeom) this.geomKind[g] = GEOM.arena;
       else if (g === floorGeom) this.geomKind[g] = GEOM.floor;
+      else if (this.cubeBodies.includes(m.geom_bodyid[g])) this.geomKind[g] = GEOM.cube;
       else if (m.geom_group[g] === 2) this.geomKind[g] = GEOM.roller;
       else if (robot >= 0)
         this.geomKind[g] = g === id("mjOBJ_GEOM", `r${robot}_blade`) || g === id("mjOBJ_GEOM", `r${robot}_bladetip`) ? GEOM.blade : GEOM.hull;
@@ -341,12 +349,14 @@ export class World {
       out: r.out,
       moving: r.cmd[0] !== 0 || r.cmd[1] !== 0,
       name: r.name,
+      green: r.green,
     }));
     const t = this.tUs / 1e6;
-    for (const e of this.rules.step(t, dt, views)) this.events.push({ ...e, t });
+    for (const e of this.rules.step(t, dt, views, this.cubeViews())) this.events.push({ ...e, t });
   }
 
   private pressButtons() {
+    if (this.arena.mode === "push-pull" && this.rules.state.signal === null && this.robots.some((r) => r.chan && Atomics.load(r.chan.ctl, C.BtnA))) this.startSignal();
     // scheduled presses: robots see them from their own clock; here only the start signal is judged
     if (this.rules.state.signal === null)
       for (const p of this.presses)
@@ -528,7 +538,9 @@ export class World {
       case GEOM.floor:
         return 0.5;
       case GEOM.world:
-        return R.wall;
+        return this.arena.mode === "push-pull" ? 0.04 : R.wall;
+      case GEOM.cube:
+        return 0.95;
       default:
         return 0;
     }
@@ -578,6 +590,8 @@ export class World {
 
   /** Threshold such that a frontal Zumo at ZUMO.proxRange is just detected at the brightest level. */
   static calibrateProx(mj: Mujoco, arena: Arena): number {
+    // Calibrate the sensor itself against a reference Zumo, away from arena objects/walls.
+    if (arena.cubes?.length) return World.calibrateProx(mj, { ...arena, cubes: [], mjcf: () => `<geom name="arena" type="box" size="2 2 0.01" pos="0 0 0.01"/>` });
     const x0 = -0.2;
     const target = x0 + ZUMO.proxSensors[1].pos[0] + ZUMO.proxRange + ZUMO.front;
     const w = new World(mj, arena, [
@@ -627,6 +641,9 @@ export class World {
     const b = f64[2];
     switch (op) {
       case OP.Sync:
+        break;
+      case OP.Green:
+        r.green = a === 1;
         break;
       case OP.Sleep:
         f64[0] = t + Math.max(0, a);
@@ -781,6 +798,13 @@ export class World {
     return hung;
   }
 
+  cubeViews(): CubeView[] {
+    return this.cubeBodies.map((b) => ({
+      pos: [this.d.xpos[b * 3], this.d.xpos[b * 3 + 1], this.d.xpos[b * 3 + 2]],
+      quat: [this.d.xquat[b * 4], this.d.xquat[b * 4 + 1], this.d.xquat[b * 4 + 2], this.d.xquat[b * 4 + 3]],
+    }));
+  }
+
   snapshot(realtime: number): WorldSnapshot {
     const d = this.d;
     const robots: RobotSnapshot[] = this.robots.map((r) => {
@@ -806,6 +830,6 @@ export class World {
         out: r.out,
       };
     });
-    return { t: this.tUs / 1e6, realtime, robots, match: structuredClone(this.rules.state) };
+    return { t: this.tUs / 1e6, realtime, robots, match: structuredClone(this.rules.state), cubes: this.cubeViews() };
   }
 }

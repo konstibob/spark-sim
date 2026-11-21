@@ -7,6 +7,7 @@
 // The race has no signal: its laps are timed per robot from its first crossing of the line.
 
 import type { Arena } from "../shared/arenas.ts";
+import { cubePoints, type CubeView } from "../shared/push-pull.ts";
 
 export type Phase = "waiting" | "countdown" | "running" | "over";
 
@@ -34,6 +35,9 @@ export interface MatchState {
   laps: number[][];
   /** robots that are out (fell off / left the ring) */
   out: boolean[];
+  cubeScores?: number[];
+  penalties?: number;
+  rescues?: number;
 }
 
 export interface RuleEvent {
@@ -50,6 +54,7 @@ export interface RobotView {
   /** motors commanded non-zero */
   moving: boolean;
   name: string;
+  green?: boolean;
 }
 
 /** rules art. 8: robots may start operating 5 s after the start signal */
@@ -85,6 +90,8 @@ export class Rules {
   private shortcutWarned: boolean[] = [];
   private falseStart: boolean[] = [];
   private go: number | null;
+  private greenOn = false;
+  private greenAt: number | null = null;
 
   constructor(
     private arena: Arena,
@@ -106,6 +113,7 @@ export class Rules {
       reason: "",
       laps: Array.from({ length: n }, () => []),
       out: new Array(n).fill(false),
+      ...(arena.mode === "push-pull" ? { cubeScores: [], penalties: 0, rescues: 0 } : {}),
     };
     this.lastBase = new Array(n).fill(-1);
     this.lapStart = new Array(n).fill(null);
@@ -119,10 +127,11 @@ export class Rules {
     const s = this.state;
     if (s.signal !== null || this.go !== null || s.ended) return [];
     s.signal = t;
-    this.go = t + START_DELAY_S;
-    s.phase = "countdown";
-    s.countdown = START_DELAY_S;
-    return [{ kind: "info", text: `Start signal — the robots may move in ${START_DELAY_S} s` }];
+    const delay = this.arena.mode === "push-pull" ? 0 : START_DELAY_S;
+    this.go = t + delay;
+    s.phase = delay ? "countdown" : "running";
+    s.countdown = delay;
+    return [{ kind: "info", text: delay ? `Start signal — the robots may move in ${delay} s` : "Start signal — button A, go immediately!" }];
   }
 
   /** A robot that was out is back in the arena (moved there by hand). */
@@ -131,7 +140,7 @@ export class Rules {
   }
 
   /** Advance by dt seconds with the current robot positions. Returns events for the console. */
-  step(t: number, dt: number, robots: RobotView[]): RuleEvent[] {
+  step(t: number, dt: number, robots: RobotView[], cubes: CubeView[] = []): RuleEvent[] {
     const s = this.state;
     const ev: RuleEvent[] = [];
     if (s.ended) return ev;
@@ -161,6 +170,30 @@ export class Rules {
     });
 
     switch (a.mode) {
+      case "push-pull": {
+        s.cubeScores = cubes.map(cubePoints);
+        s.scores[0] = s.cubeScores.reduce((sum, v) => sum + v, 0) - (s.penalties ?? 0);
+        const small = s.cubeScores.filter((v) => v === 3).length;
+        const home = s.cubeScores.filter((v) => v === 1).length;
+        s.detail[0] = `${small}/4 small · ${home} home · ${s.penalties ?? 0} penalty`;
+        const r = robots[0];
+        if (r?.moving && !running && !this.falseStart[0]) {
+          this.falseStart[0] = true;
+          ev.push({ kind: "warn", slot: 0, text: "False start: motors moved before A. Officially: restart with −1; a second false start scores 0. Reset this practice run." });
+        }
+        if (running && s.out[0]) {
+          s.penalties = (s.penalties ?? 0) + 2;
+          s.scores[0] -= 2;
+          this.end(ev, 0, "left the arena (−2 points)");
+        }
+        const green = !!r?.green;
+        if (running && green && !this.greenOn) {
+          if (this.greenAt !== null && t - this.greenAt >= 0.1 && t - this.greenAt <= 2) this.end(ev, 0, "finished — green blink signal");
+          this.greenAt = t;
+        }
+        this.greenOn = green;
+        break;
+      }
       case "sumo":
         robots.forEach((r, i) => {
           if (r.moving && !running && !this.falseStart[i]) {
@@ -264,6 +297,25 @@ export class Rules {
   }
 
   /** Slot with the highest score, null on a tie */
+  referee(action: "rescue" | "touch" | "finish"): RuleEvent[] {
+    const s = this.state;
+    const ev: RuleEvent[] = [];
+    if (s.mode !== "push-pull" || s.phase !== "running" || s.ended) return ev;
+    if (action === "rescue") {
+      if (s.rescues) this.end(ev, 0, "stuck a second time");
+      else {
+        s.rescues = 1;
+        s.penalties = (s.penalties ?? 0) + 1;
+        s.scores[0] -= 1;
+        ev.push({ kind: "warn", text: "Referee rescue (−1 point). Shift+drag the robot free; a second rescue ends the round." });
+      }
+    } else {
+      if (action === "touch") { s.penalties = (s.penalties ?? 0) + 1; s.scores[0] -= 1; }
+      this.end(ev, 0, action === "finish" ? "finished — referee confirmed green signal" : "touched robot or cube (−1 point)");
+    }
+    return ev;
+  }
+
   private leader(): number | null {
     const sc = this.state.scores;
     const best = Math.max(...sc);

@@ -169,6 +169,7 @@ export async function runRobot(
         rgb.push(Math.round(r * bright), Math.round(g * bright), Math.round(b * bright));
       }
       post({ type: "leds", slot, rgb, t: t() });
+      rpc(OP.Green, rgb.some((v, i) => i % 3 === 1 && v > 0) && rgb.every((v, i) => i % 3 === 1 || v === 0) ? 1 : 0);
     },
     yellow: (on: number) => post({ type: "yellow", slot, on: on === 1, t: t() }),
     buzz: (s: string) => {

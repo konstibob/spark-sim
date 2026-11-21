@@ -8,6 +8,7 @@
 
 import type { Arena, Pose } from "../shared/arenas.ts";
 import { ZUMO } from "../shared/zumo-spec.ts";
+import { PUSH_PULL } from "../shared/push-pull.ts";
 
 export const ROLLERS_X = [0, 1, 2, 3].map((i) => ZUMO.axleRear + ((ZUMO.axleFront - ZUMO.axleRear) * i) / 3);
 export const DRIVEN = 3; // front roller = drive sprocket (the motors sit at the front)
@@ -105,7 +106,7 @@ export function armatureAtRoller(): number {
   return atSprocket * k * k;
 }
 
-export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[] = []): string {
+export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[] = [], cubes = arena.cubes ?? []): string {
   const z0 = arena.surfaceZ;
   const bodies = poses.map((pose, i) => robotBody(i, pose, z0, opts[i] ?? {})).join("");
   const eq = poses
@@ -132,6 +133,10 @@ export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[]
   <worldbody>
     <geom name="floor" type="plane" size="5 5 0.1" friction="0.1 0.005 0.0001" contype="1" conaffinity="1" group="0"/>
     ${arena.mjcf()}
+    ${cubes.map((p, i) => `<body name="cube${i}" pos="${p.x} ${p.y} ${z0 + PUSH_PULL.cube / 2 + 0.0005}" euler="0 0 ${p.yaw * 180 / Math.PI}">
+      <freejoint name="cube${i}_free"/>
+      <geom name="cube${i}_geom" type="box" size="0.03 0.03 0.03" mass="${PUSH_PULL.mass}" friction="${PUSH_PULL.friction} 0.005 0.0001" contype="1" conaffinity="7" group="1"/>
+    </body>`).join("")}
     ${bodies}
   </worldbody>
   <equality>

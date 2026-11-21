@@ -2073,6 +2073,22 @@ led.off()
     ],
   },
   {
+    id: "arena-push-pull",
+    group: "Arenas and rules",
+    title: "Challenge 2 · Push & Pull",
+    summary: "160 cm arena, editable cube map, 12 cm and 30 cm scoring squares, button A and 120 seconds.",
+    blocks: [
+      { p: "Ein Roboter startet mittig in Richtung +x. Die Arena hat 160 × 160 cm freie Fläche, einen hellen Boden und 10 cm hohe schwarze Wände. Die zwei schwarzen Bandquadrate in der Mitte sind 30 × 30 cm und 12 × 12 cm groß. Fünf reflektierende Würfel messen je 6 × 6 × 6 cm." },
+      { table: { head: ["Würfel am Ende", "Punkte"], rows: [["vollständig im 12-cm-Quadrat", "3"], ["sonst mindestens halb im 30-cm-Quadrat", "1"], ["außerhalb", "0"]] } },
+      { p: "Vier Würfel passen genau ins kleine Quadrat. Zusammen mit dem fünften Würfel im großen Quadrat sind maximal 13 Punkte möglich. Die Simulation wertet die tatsächliche gedrehte Grundfläche jedes Würfels aus; die Mitte allein reicht nicht." },
+      { h: "Karte und Simulation", id: "map" },
+      { list: ["Arena-Karte öffnet eine maßstäbliche Draufsicht mit Zoom ins Zentrum. Vor dem Lauf Würfel ziehen oder x/y in cm und Winkel eingeben. Der Ursprung liegt in der Mitte, +x rechts, +y oben.", "Die Beispielpositionen sind keine offiziellen Positionen. Die Aufstellung bleibt im Browser gespeichert, kann als JSON exportiert/importiert werden und ist bei jedem Run identisch. Reset setzt auch die Würfel zurück.", "Program: Push & Pull · one-cube demo zeigt das Umfahren und Heimschieben von Würfel 1 auf der Beispielkarte. Eigene Programme nutzen normales MicroPython und die Zumo-Sensoren. Die Demo verwendet bekannte Wegpunkte und ist keine autonome Würfelsuche.", "Run startet das Programm, das auf Taste A wartet. Start / S gibt A; auch die Hardware-Taste A im Inspector funktioniert. Sofort losfahren: keine 5-s-Sumo-Wartezeit. Nach 120 Sekunden friert die Wertung ein.", "Zwei grüne LED-Blinkimpulse im Abstand von 0,1 bis 2 Sekunden beenden den Lauf vorzeitig. Dauergrün reicht nicht. Kein Knopf im Roboterprogramm beendet den Lauf.", "Test bench führt Sololäufe auf derselben gespeicherten Karte aus. Durchschnittliche Punkte und Zeiten helfen, Änderungen zu vergleichen; Watch lädt die Aufstellung des betreffenden Laufs."] },
+      { h: "Modell und Schiedsrichter", id: "model" },
+      { p: "Annahmen zum Nachkalibrieren: 1 cm Bandbreite außerhalb der beschrifteten Zielquadrate, 60 g Würfelmasse, Reibwert 0,35 und angenäherte IR-Reflexion. Die Zumo-Schaufel schiebt mit echter Kontaktphysik; eine Zug- oder Greifvorrichtung ist nicht modelliert." },
+      { p: "Arena-Karte → Modell & Schiedsrichter: einmal Befreien kostet 1 Punkt; danach mit Shift+Ziehen versetzen. Zweites Befreien beendet den Lauf. Berührt kostet 1 Punkt und beendet den Lauf. Ausbruch kostet automatisch 2 Punkte und beendet den Lauf. Die 10 Sekunden Feststecken beurteilst du selbst. Frühstarts werden als Warnung gemeldet; den offiziellen Neustart mit −1 beziehungsweise die Disqualifikation beim zweiten Frühstart verwaltest du manuell." },
+    ],
+  },
+  {
     id: "arena-free",
     group: "Arenas and rules",
     title: "Free practice",

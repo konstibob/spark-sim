@@ -1,7 +1,7 @@
 // Test bench pane: pick A and B (a robot slot's current code or any house bot), run N headless matches,
 // see win rate with a 95 % interval and watch any single match again.
 import { BOTS, CATEGORY_LABEL } from "../bots/index.ts";
-import { arenaById } from "../shared/arenas.ts";
+import { arenaById, type Pose } from "../shared/arenas.ts";
 import { BenchRunner, benchMaxTime, summarize, type BenchConfig, type BenchMatch } from "./bench.ts";
 import type { WorldTweaks } from "../shared/protocol.ts";
 import type { RobotConfig } from "./session.ts";
@@ -11,6 +11,7 @@ export interface BenchHost {
   slots(): RobotConfig[];
   arena(): string;
   tweaks(): WorldTweaks;
+  cubes(): Pose[];
   /** load one match into the main view and run it */
   watch(cfg: BenchConfig, index: number): void;
   log(text: string): void;
@@ -117,6 +118,11 @@ export class BenchPanel {
     else this.selA.value = "slot:0";
     if (keepB && [...this.selB.options].some((o) => o.value === keepB)) this.selB.value = keepB;
     else this.selB.value = this.host.slots().length > 1 ? "slot:1" : "none";
+    const solo = arenaById(this.host.arena()).maxRobots === 1;
+    if (solo) this.selB.value = "none";
+    this.selB.disabled = solo;
+    this.rrBtn.disabled = solo;
+    this.spread.disabled = solo;
   }
 
   private resolve(v: string): RobotConfig | null {
@@ -128,7 +134,7 @@ export class BenchPanel {
 
   private async run() {
     const a = this.resolve(this.selA.value);
-    const b = this.resolve(this.selB.value);
+    const b = arenaById(this.host.arena()).maxRobots === 1 ? null : this.resolve(this.selB.value);
     if (!a) return;
     const arena = arenaById(this.host.arena());
     const cfg: BenchConfig = {
@@ -140,6 +146,7 @@ export class BenchPanel {
       maxTime: benchMaxTime(arena),
       baseSeed: (Math.random() * 1e9) >>> 0,
       tweaks: this.host.tweaks(),
+      cubes: this.host.cubes(),
     };
     this.runner = new BenchRunner();
     const my = ++this.token;
@@ -178,6 +185,7 @@ export class BenchPanel {
       b.classList.remove("running");
       b.disabled = false;
     }
+    this.rrBtn.disabled = arenaById(this.host.arena()).maxRobots === 1;
   }
 
   private cancel() {
@@ -192,6 +200,7 @@ export class BenchPanel {
   }
 
   private async roundRobin() {
+    if (arenaById(this.host.arena()).maxRobots === 1) return;
     const bots = BOTS.filter((b) => b.category === this.rrCat.value);
     const entrants: RobotConfig[] = bots.map((b) => ({ name: b.name, code: b.code }));
     if (this.rrMine.getAttribute("aria-pressed") === "true") this.host.slots().forEach((s) => entrants.unshift({ ...s }));

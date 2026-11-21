@@ -124,6 +124,18 @@ touching the core — e.g. `registerArena(id, factory)` (`src/shared/arenas.ts`)
 `registerRuleHandler(mode, fn)` (`src/world/rules.ts`) and `setBrand(...)` (`src/ui/brand.ts`). This is how
 an event can keep its competition arenas, opponent bots and theme in a private layer while the core stays open.
 
+## Workflow
+
+We work in the fork [konstibob/spark-sim](https://github.com/konstibob/spark-sim). All branches and pull
+requests go into its `main` — not into the upstream [spark-hpi/spark-sim](https://github.com/spark-hpi/spark-sim).
+
+```bash
+git remote -v                     # origin = konstibob/spark-sim, upstream = spark-hpi/spark-sim
+git push -u origin HEAD           # push your branch to the fork
+gh pr create --repo konstibob/spark-sim --base main
+git pull upstream main            # pick up upstream changes when needed
+```
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE). Third-party components and fonts are listed in [NOTICE](NOTICE). The code

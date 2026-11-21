@@ -31,6 +31,7 @@ import { Telemetry } from "./ui/telemetry.ts";
 import { Viewer, type Theme } from "./ui/viewer.ts";
 import { PushPullMap } from "./ui/push-pull-map.ts";
 import { DEFAULT_CUBES, validCubeLayout } from "./shared/push-pull.ts";
+import { validCalibration, type CalibrationSetup } from "./shared/calibration.ts";
 import { parseDiscovery, RobotOutputLines } from "./shared/discovery.ts";
 import { DiscoveryView } from "./ui/discovery-view.ts";
 import mappingHelper from "./robot/python/spark_mapping.py?raw";
@@ -90,6 +91,9 @@ let cubeLayout: Pose[] = validCubeLayout(savedCubes) ? savedCubes : DEFAULT_CUBE
 const savedSeed = store.get<unknown>("push-pull-cube-seed", null);
 /** the seed cubeLayout was generated from; null = placed by hand */
 let cubeSeed: number | null = validCubeLayout(savedCubes) && typeof savedSeed === "number" ? savedSeed : null;
+const savedCalibration = store.get<unknown>("push-pull-calibration", null);
+/** Push & Pull: play the crew's calibration windows before each run (null = skip, the default) */
+let calibration: CalibrationSetup | null = validCalibration(savedCalibration) ? savedCalibration : null;
 /** stored values can be from older versions or edited by hand: keep only what makes sense */
 function loadSlots(raw: unknown): Slot[] {
   const list = (Array.isArray(raw) ? raw : [])
@@ -343,7 +347,14 @@ const pushPullMap = new PushPullMap(() => cubeLayout, () => cubeSeed, (poses, se
   store.set("push-pull-cubes", poses);
   store.set("push-pull-cube-seed", seed);
   load(false);
-}, (action) => host.referee(action));
+}, (action) => host.referee(action), {
+  get: () => calibration,
+  set: (value) => {
+    calibration = value;
+    store.set("push-pull-calibration", value);
+    load(false);
+  },
+});
 $("arena-map").onclick = () => pushPullMap.open();
 
 function setRunning(on: boolean) {
@@ -363,7 +374,7 @@ let recording = false;
 
 function load(
   run: boolean,
-  opts: { seed?: number; poses?: Pose[]; robots?: RobotConfig[]; label?: string; startAt?: number | null; arena?: string; tweaks?: WorldTweaks; cubes?: Pose[] } = {},
+  opts: { seed?: number; poses?: Pose[]; robots?: RobotConfig[]; label?: string; startAt?: number | null; arena?: string; tweaks?: WorldTweaks; cubes?: Pose[]; calibration?: CalibrationSetup | null } = {},
 ) {
   runId++;
   buzzers.stopAll();
@@ -406,11 +417,12 @@ function load(
   let poses = opts.poses;
   const byHand = !poses && scene.fromSlots && placed.some(Boolean);
   if (byHand) poses = robots.map((_, i) => placed[i] ?? arena.starts[i % arena.starts.length]);
-  void host.load({ arena: scene.arena, robots, seed, poses, autoPressA: startAt, run, tweaks: opts.tweaks ?? tweaks, cubes: opts.cubes ?? cubeLayout });
+  const cal = opts.calibration !== undefined ? opts.calibration : calibration;
+  void host.load({ arena: scene.arena, robots, seed, poses, autoPressA: startAt, run, tweaks: opts.tweaks ?? tweaks, cubes: opts.cubes ?? cubeLayout, calibration: cal });
   host.setSpeed(speed);
   setRunning(run && liveDone.size < robots.length);
   updateInspectorHead();
-  if (run) log(`▶ ${opts.label ?? "run"} · ${robots.map((r) => r.name).join(" vs ")} · ${arena.name} · seed ${seed}${byHand ? " · start positions moved by hand (↺ Reset puts them back)" : ""}`, "sys");
+  if (run) log(`▶ ${opts.label ?? "run"} · ${robots.map((r) => r.name).join(" vs ")} · ${arena.name} · seed ${seed}${byHand ? " · start positions moved by hand (↺ Reset puts them back)" : ""}${arena.mode === "push-pull" && cal ? ` · calibration windows first (wall ${cal.wallCm} cm, cube ${cal.cubeCm} cm)` : ""}`, "sys");
 }
 
 /** ↺ Reset: the robots back to the arena's start positions (forgets positions set by hand) */
@@ -1279,12 +1291,13 @@ runsGrid = new RunsGrid({
   arena: () => arenaId,
   tweaks: () => tweaks,
   layout: () => cubeLayout.map((p) => ({ ...p })),
+  calibration: () => calibration,
   speed: () => speed,
   stopMain: () => stop("runs started"),
   log: (text) => log(text, "sys"),
   open(run) {
     // exactly this run (seed, cubes, World settings, start signal at 0.2 s) in the 3D view
-    load(true, { seed: run.seed, robots: [run.robot], label: `run ${run.index + 1}`, startAt: RUN_START_S, arena: run.arena, tweaks: run.tweaks, cubes: run.cubes, poses: arenaById(run.arena).starts.slice(0, 1) });
+    load(true, { seed: run.seed, robots: [run.robot], label: `run ${run.index + 1}`, startAt: RUN_START_S, arena: run.arena, tweaks: run.tweaks, cubes: run.cubes, calibration: run.calibration, poses: arenaById(run.arena).starts.slice(0, 1) });
     showBanner(`Run ${run.index + 1} · seed ${run.seed} — Reset returns to your robots`, 3500);
   },
 });

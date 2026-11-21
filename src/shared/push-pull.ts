@@ -157,3 +157,57 @@ export function cubePoints(cube: CubeView): 0 | 1 | 3 {
   }
   return area(clipped) + 1e-10 >= area(footprint) / 2 ? 1 : 0;
 }
+
+// ---------------------------------------------------------------- measured by the crew (stock Zumo)
+// calibration_stock_zumo.csv, 21.11.2026: Zumo …5b412f without extra sensors, in the Push & Pull arena, 5.5 V,
+// run 3 (run 2 within ±1). Front sensor counts for every centimetre from the scoop (0 … 24 cm), [FL, FR].
+
+/** The crew's fine brightness levels: 30 steps over Pololu's range, counts 0 … 30 */
+export const FINE_LEVELS: readonly number[] = Array.from({ length: 30 }, (_, i) => Math.round(10 * 756.3 ** (i / 29)));
+
+export const MEASURED_PROX = {
+  wall: {
+    default: [[0, 0], [3, 2], [4, 3], [4, 4], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [5, 5], [4, 5], [4, 4], [4, 4], [4, 4], [4, 4], [4, 4], [4, 4], [4, 4]],
+    fine: [[0, 0], [4, 3], [6, 5], [10, 10], [12, 12], [14, 14], [14, 14], [14, 15], [14, 15], [14, 14], [14, 14], [13, 14], [13, 13], [13, 13], [13, 13], [12, 12], [12, 12], [12, 12], [11, 11], [11, 11], [11, 11], [11, 11], [11, 11], [10, 10], [10, 10]],
+  },
+  cube: {
+    default: [[6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [6, 6], [5, 6], [5, 5]],
+    fine: [[18, 16], [21, 19], [22, 20], [22, 20], [22, 21], [23, 21], [23, 22], [23, 22], [23, 22], [23, 22], [22, 21], [22, 21], [21, 21], [21, 21], [21, 20], [20, 20], [20, 19], [19, 19], [19, 18], [18, 18], [18, 18], [17, 17], [17, 16], [17, 16], [16, 16]],
+  },
+} as const satisfies Record<"wall" | "cube", Record<"default" | "fine", readonly (readonly [number, number])[]>>;
+
+/** Line sensors s0 (left) … s4 (right), raw 0 … 1024 */
+export const MEASURED_LINE = {
+  floor: [57, 36, 30, 37, 43],
+  tape: [961, 726, 565, 954, 1024],
+  startSquare: [86, 51, 43, 53, 83],
+} as const;
+
+/**
+ * Front proximity response in the Push & Pull arena, fitted to MEASURED_PROX by scripts/fit-prox.ts. The real
+ * sensor is far flatter over distance than an inverse-square model (the black wall still reads 4–5 at 24 cm,
+ * a cube stays at 6 up to 22 cm) and dark right at the wall (0 with the scoop touching), so the walls and cubes
+ * of this arena do not use reflectance × 1/d²: each ray that hits them adds `10 ** table(d)` × the LED's beam
+ * weight × the receiver's cosine, d = ray length from the receiver (m). Between the knots log-linear; beyond the
+ * last knot it falls with 1/d² (assumption: nothing was measured past 24 cm). The scale is the sim's detection
+ * threshold: a count needs level × signal ≥ 1.
+ */
+export const PROX_RESPONSE = {
+  knots: [0.0069, 0.0169, 0.0269, 0.0369, 0.0469, 0.0569, 0.0669, 0.0769, 0.0869, 0.0969, 0.1069, 0.1169, 0.1269, 0.1369, 0.1469, 0.1569, 0.1669, 0.1769, 0.1869, 0.1969, 0.2069, 0.2169, 0.2269, 0.2369, 0.2469],
+  wall: [-4.691, -4.217, -5.648, -4.353, -4.335, -3.879, -3.915, -3.934, -3.945, -3.963, -3.912, -3.964, -4.060, -4.089, -3.951, -4.169, -4.200, -4.046, -4.285, -4.289, -4.264, -4.297, -4.124, -4.384, -4.322],
+  cube: [-2.785, -2.750, -2.824, -2.924, -2.933, -2.899, -2.796, -2.789, -2.775, -2.710, -2.860, -2.788, -2.865, -2.777, -2.835, -2.890, -2.959, -2.900, -2.952, -3.012, -3.007, -3.110, -3.182, -3.026, -3.079],
+};
+
+/** Signal of one ray hitting a wall or cube at d metres from the receiver (see PROX_RESPONSE) */
+export function proxResponse(kind: "wall" | "cube", d: number): number {
+  const k = PROX_RESPONSE.knots;
+  const v = PROX_RESPONSE[kind];
+  const n = k.length;
+  if (!n) return 0;
+  if (d <= k[0]) return 10 ** v[0];
+  if (d >= k[n - 1]) return 10 ** v[n - 1] * (k[n - 1] / d) ** 2;
+  let i = 1;
+  while (k[i] < d) i++;
+  const t = (d - k[i - 1]) / (k[i] - k[i - 1]);
+  return 10 ** (v[i - 1] + t * (v[i] - v[i - 1]));
+}

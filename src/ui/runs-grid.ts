@@ -3,6 +3,7 @@
 // top view, the side column the results as they come in (mean, median, best/worst, a points histogram).
 // Same base seed = same runs as `npm run runs -- prog.py --base-seed N` on the command line.
 import { arenaById, type Arena, type Pose } from "../shared/arenas.ts";
+import type { CalibrationSetup } from "../shared/calibration.ts";
 import type { WorldSnapshot, WorldTweaks } from "../shared/protocol.ts";
 import { cubePoints, PUSH_PULL } from "../shared/push-pull.ts";
 import { RUN_START_S, runCubes, runSeed, shortReason, summarizeRuns, type RunResult } from "../shared/runs.ts";
@@ -16,9 +17,11 @@ export interface RunsHost {
   tweaks(): WorldTweaks;
   /** the Arena-Karte layout */
   layout(): Pose[];
+  /** the Arena-Karte calibration setting (null = skipped) */
+  calibration(): CalibrationSetup | null;
   speed(): number;
   /** load one run into the main 3D view (closes the grid) */
-  open(run: { index: number; seed: number; cubes: Pose[]; robot: RobotConfig; arena: string; tweaks: WorldTweaks }): void;
+  open(run: { index: number; seed: number; cubes: Pose[]; robot: RobotConfig; arena: string; tweaks: WorldTweaks; calibration: CalibrationSetup | null }): void;
   /** the grid takes over the stage: stop the main match */
   stopMain(): void;
   log(text: string): void;
@@ -67,6 +70,7 @@ export class RunsGrid {
   private robot: RobotConfig | null = null;
   private arena: Arena | null = null;
   private tweaksUsed: WorldTweaks | null = null;
+  private calibrationUsed: CalibrationSetup | null = null;
   private count = 16;
   private bg: HTMLCanvasElement | null = null;
   private frame = 0;
@@ -111,6 +115,8 @@ export class RunsGrid {
     this.robot = this.host.robot();
     this.arena = arenaById(this.host.arena());
     this.tweaksUsed = { ...this.host.tweaks() };
+    const cal = this.host.calibration();
+    this.calibrationUsed = cal ? { ...cal } : null;
     this.bg = null;
     this.highlight = null;
     const base = Math.max(1, Math.floor(Number(this.seedInput.value)) || 1);
@@ -171,6 +177,7 @@ export class RunsGrid {
         run: true,
         tweaks: this.tweaksUsed,
         cubes: run.cubes,
+        calibration: this.calibrationUsed,
       });
       h.setSpeed(this.host.speed());
     }
@@ -203,7 +210,7 @@ export class RunsGrid {
 
   private open(run: Run) {
     if (!this.robot || !this.arena || !this.tweaksUsed) return;
-    const what = { index: run.index, seed: run.seed, cubes: run.cubes.map((p) => ({ ...p })), robot: this.robot, arena: this.arena.id, tweaks: this.tweaksUsed };
+    const what = { index: run.index, seed: run.seed, cubes: run.cubes.map((p) => ({ ...p })), robot: this.robot, arena: this.arena.id, tweaks: this.tweaksUsed, calibration: this.calibrationUsed };
     this.close();
     this.host.open(what);
   }
@@ -346,7 +353,7 @@ export class RunsGrid {
         tone = "done";
       } else if (m) {
         const stuck = m.stuck ?? 0;
-        foot = m.phase === "waiting" ? "waiting for A" : `${m.t.toFixed(1)} s${stuck >= STUCK_WARN_S ? ` · STUCK ${Math.floor(stuck)} s` : ""}${m.rescues ? " · freed once" : ""}`;
+        foot = m.phase === "waiting" ? (m.calWindow ? `calibration ${m.calWindow}/3` : "waiting for A") : `${m.t.toFixed(1)} s${stuck >= STUCK_WARN_S ? ` · STUCK ${Math.floor(stuck)} s` : ""}${m.rescues ? " · freed once" : ""}`;
         tone = stuck >= STUCK_WARN_S ? "stuck" : "";
       }
       if (run.error) {

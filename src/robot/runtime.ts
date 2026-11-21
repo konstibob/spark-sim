@@ -3,6 +3,7 @@
 
 import { C, F64_LEN, OP, ST, openChannel, type ChannelBuffers, type FromRobot } from "../shared/protocol.ts";
 import { COST_US, HEAP_BYTES } from "../shared/zumo-spec.ts";
+import { calibrationPlan } from "../shared/calibration.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MicroPython = any;
@@ -22,6 +23,9 @@ export interface RobotJob {
   presses?: { idx: number; at: number }[];
   /** Push & Pull's referee start must survive imports/calibration until the program polls A. */
   latchStartA?: boolean;
+  /** Push & Pull: the crew's calibration windows run before the start (the first scheduled A becomes four:
+   *  windows 1–3 and the start, see calibrationPlan); false = skipped, spark_start.SIM_SKIP_CALIBRATION */
+  calibration?: boolean;
 }
 
 const PRESS_US = 100_000;
@@ -53,8 +57,12 @@ export async function runRobot(
     if (clock - lastSync >= COST_US.quantum) rpc(OP.Sync);
   };
   const presses = job.presses ?? [];
-  const scheduledStart = job.latchStartA ? presses.find((p) => p.idx === C.BtnA) : undefined;
-  let scheduledStartConsumed = false;
+  // Push & Pull: scheduled A presses the program may only poll later (the start, the calibration windows) are
+  // latched: each one stays pending until the program reads A, in order
+  const firstA = job.latchStartA ? presses.filter((p) => p.idx === C.BtnA).sort((a, b) => a.at - b.at)[0] : undefined;
+  const plan = firstA && job.calibration ? calibrationPlan(firstA.at / 1e6) : null;
+  const latched = plan ? [...plan.presses, plan.start].map((t) => ({ idx: C.BtnA, at: Math.round(t * 1e6) })) : firstA ? [firstA] : [];
+  let latchedNext = 0;
   let startAUntil = -Infinity;
   // timer interrupt: Python tells when the next timer is due; the VM hook then schedules its handler
   let irqAt = Infinity;
@@ -155,23 +163,25 @@ export async function runRobot(
       return r < 0 ? r + TICKS_PERIOD : r;
     },
     rpc,
+    /** 1 = the crew's calibration windows run in this simulation, 0 = skipped (spark_start.SIM_SKIP_CALIBRATION) */
+    calibration: () => (job.calibration ? 1 : 0),
     button: (i: number, initializing = 0) => {
       settle();
       const idx = C.BtnA + i;
       if (i === 0 && job.latchStartA) {
-        const scheduled = scheduledStart && !scheduledStartConsumed && clock >= scheduledStart.at;
+        const scheduled = latchedNext < latched.length && clock >= latched[latchedNext].at;
         const live = Atomics.load(ctl, C.StartA) !== 0;
         // Button.__init__ reads the baseline. Consuming/holding the start there
         // would set last_event=True and swallow its rising edge in check().
         if (initializing && (scheduled || live)) return 0;
         if (scheduled || live) {
-          if (scheduled) scheduledStartConsumed = true;
+          if (scheduled) latchedNext++;
           Atomics.store(ctl, C.StartA, 0);
           startAUntil = clock + PRESS_US;
         }
         if (clock < startAUntil) return 1;
       }
-      for (const p of presses) if (p !== scheduledStart && p.idx === idx && clock >= p.at && clock < p.at + PRESS_US) return 1;
+      for (const p of presses) if (p !== firstA && p.idx === idx && clock >= p.at && clock < p.at + PRESS_US) return 1;
       return Atomics.load(ctl, idx); // live presses (inspector, keys, the UI start signal)
     },
     show: (hex: string, inverted: number, flipped: number) =>

@@ -83,6 +83,8 @@ export class Viewer {
   private arenaMesh: THREE.Object3D | null = null;
   private arena: Arena | null = null;
   private cubes: THREE.Mesh[] = [];
+  /** Push & Pull: the crew's calibration cube (window 3), hidden otherwise */
+  private calCube: THREE.Mesh | null = null;
   private overlayOn = true;
   private selected = 0;
   private last: WorldSnapshot | null = null;
@@ -286,7 +288,12 @@ export class Viewer {
         this.cubes.push(cube);
         group.add(cube);
       }
-    }
+      this.calCube = new THREE.Mesh(new THREE.BoxGeometry(P.cube, P.cube, P.cube), new THREE.MeshStandardMaterial({ color: 0xf3c98b, metalness: 0.45, roughness: 0.22 }));
+      this.calCube.add(new THREE.LineSegments(new THREE.EdgesGeometry(this.calCube.geometry), new THREE.LineBasicMaterial({ color: 0x8a5a14 })));
+      this.calCube.castShadow = this.calCube.receiveShadow = true;
+      this.calCube.visible = false;
+      group.add(this.calCube);
+    } else this.calCube = null;
     this.arenaMesh = group;
     this.scene.add(group);
     // fog was tuned for the ~0.9 m dohyo: push it back on bigger arenas, or the far walls fade into the background
@@ -548,6 +555,14 @@ export class Viewer {
       cube.position.set(...s.pos);
       cube.quaternion.set(s.quat[1], s.quat[2], s.quat[3], s.quat[0]);
     });
+    if (this.calCube) {
+      const c = snap.calCube;
+      this.calCube.visible = !!c;
+      if (c) {
+        this.calCube.position.set(...c.pos);
+        this.calCube.quaternion.set(c.quat[1], c.quat[2], c.quat[3], c.quat[0]);
+      }
+    }
     snap.robots.forEach((s, i) => {
       const r = this.robots[i];
       if (!r) return;

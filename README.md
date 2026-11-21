@@ -43,6 +43,8 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   A starts immediately, with **no sumo countdown**. The demo drives behind the first example
   cube and pushes it into the big square. It uses known example waypoints and encoder/gyro
   odometry; adapt it for another layout. Your own MicroPython uses the normal robot APIs.
+  The simulator remembers a Push & Pull referee Start until the program first polls A, so imports
+  or calibration cannot lose an early Start click. Ordinary held/released hardware-button input is separate.
 - Scoring is live, from each cube's rotated footprint. 12 and 30 cm are inner sizes and the
   2.5 cm tape around them counts: **3 points** completely within the small square including its
   tape (17 × 17 cm), otherwise **1 point** for at least half within the big square including its
@@ -97,6 +99,16 @@ node deploy/serve-practice.mjs        # serves ./dist-practice on http://localho
 - **Optional VL53L5CX + ESP32-C6:** enable **VL53L5CX** above the 3D view for an 8×8 depth image,
   visible module, field grid and measured points on every arena. Includes a proposed UART JSONL bridge
   and MicroPython example. [Specifications, serial contract and simulation limits](docs/VL53L5CX.md).
+- **Robot view / Discovery Map:** below the depth image, **Testskript laden** loads a fixed,
+  editable forwards/turn/backwards sequence (Run, then A). There is no autonomous exploration or
+  route choice. The map observes encoder/gyro and serial ToF while the sample moves, showing estimated pose, estimated path,
+  observed free space and obstacle hypotheses, or the current top-down scan. Everything comes from
+  portable `spark_mapping.py` output: no true robot pose, cube positions or arena geometry. The local
+  map starts unknown; replay restores the estimate at that time. This is odometry + mapping as a
+  foundation for SLAM; map-based pose correction and loop closure are not implemented yet.
+  For hardware, download `spark_mapping.py` and `spark_tof.py` alongside the program using the Download menu.
+  **Messdaten exportieren** saves sensor-derived JSONL for offline SLAM comparisons.
+  [Spline-SLAM experiment and reproduction](docs/SLAM_EXPERIMENT.md).
 - **Test bench:** many headless matches in parallel → win rate with a confidence interval; watch any match again.
 - **Debugging:** a timeline to scrub every frame, telemetry strip charts, a plotter for your `print`s, a 3D
   sensor view, errors marked in the editor, autocompletion and in-app docs for the robot API.

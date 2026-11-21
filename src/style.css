@@ -1724,11 +1724,28 @@ table.bench-table {
 .tof-panel { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--rule); }
 .tof-switch { display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
 .tof-switch small { margin-left: auto; font-size: 10px; font-weight: 400; }
-.tof-grid { display: grid; gap: 2px; width: 100%; aspect-ratio: 1; margin: 10px 0 6px; }
+.tof-grid { display: grid; gap: 2px; width: 100%; max-width: 208px; aspect-ratio: 1; margin: 10px auto 6px; }
 .tof-grid span { display: flex; align-items: center; justify-content: center; min-width: 0; font: 9px var(--mono); background: var(--rule); border-radius: 2px; }
 .tof-grid span.valid { color: #080d20; }
 .tof-legend { display: flex; justify-content: space-between; padding-top: 7px; border-top: 5px solid transparent; border-image: linear-gradient(to right, hsl(35 80% 53%), hsl(240 80% 53%)) 1; font-size: 9px; }
 .tof-note { font-size: 10px; line-height: 1.5; opacity: 0.7; margin: 8px 0; }
+.discovery-panel { margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--rule); }
+.discovery-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+.discovery-heading span { font: 9px var(--mono); color: var(--link); }
+.discovery-tabs { display: flex; margin-bottom: 8px; }
+.discovery-tabs button { flex: 1; padding: 7px 4px; font-size: 10px; }
+#discovery-map { width: 100%; aspect-ratio: 1; display: block; border: 1px solid var(--rule); }
+.discovery-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 8px 0 12px; font-size: 9px; }
+.discovery-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.discovery-legend i { width: 8px; height: 8px; border: 1px solid #526279; }
+.discovery-legend .unknown { background: #111b2b; }
+.discovery-legend .free { background: #243d54; }
+.discovery-legend .hit { background: #f5ab61; }
+.discovery-pose { font: 10px / 1.6 var(--mono); margin: 8px 0; font-variant-numeric: tabular-nums; }
+.discovery-panel .hint { font-size: 10px; line-height: 1.5; margin: 5px 0; }
+.discovery-note { font-size: 10px; line-height: 1.6; opacity: 0.7; margin: 8px 0 12px; }
+.discovery-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.discovery-actions .btn { font-size: 10px; }
 /* OLED framed like the workshop pictures on the website: rule, texture, picture inside */
 .oled-frame {
   border: 1px solid var(--rule);

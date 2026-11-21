@@ -9,10 +9,11 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import loadMujoco from "mujoco";
 import { arenaById, jitteredStarts, type Pose } from "../src/shared/arenas.ts";
-import { C, makeBell, makeChannelBuffers, openChannel, type FromRobot } from "../src/shared/protocol.ts";
+import { C, makeBell, makeChannelBuffers, openChannel, type FromRobot, type RobotSnapshot } from "../src/shared/protocol.ts";
 import type { MatchState } from "../src/world/rules.ts";
 import { World } from "../src/world/world.ts";
 import { cubesFromSeed, validCubeLayout } from "../src/shared/push-pull.ts";
+import { RobotOutputLines } from "../src/shared/discovery.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -32,6 +33,8 @@ export function pythonLib(): Record<string, string> {
 }
 
 export interface MatchResult {
+  /** Ground truth for evaluation only; never passed to the robot program. */
+  robots: RobotSnapshot[];
   /** sim seconds when the run stopped */
   t: number;
   /** robot i left the arena */
@@ -57,6 +60,8 @@ export interface MatchOptions {
   /** random start spread (deterministic per seed); 0 = exact start slots */
   jitter?: number;
   presses?: { button: "A" | "B" | "C"; t: number }[];
+  /** Referee Start sent through World.startSignal(), like Run -> Start in the UI. */
+  liveStartAt?: number;
   echo?: boolean;
   /** stop as soon as a robot is out (default false: in koth, shuttle and race one robot out decides nothing yet) */
   stopWhenOut?: boolean;
@@ -84,6 +89,7 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
   const errors: (string | undefined)[] = [];
   const done = opts.programs.map(() => false);
   const workers: Worker[] = [];
+  const output = opts.programs.map(() => new RobotOutputLines());
   const chans = opts.programs.map((code, slot) => {
     const buffers = makeChannelBuffers();
     const chan = openChannel(buffers);
@@ -99,16 +105,19 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
         seed: (seed * 31 + slot * 7) >>> 0,
         // the robots read scheduled presses from their own clock (deterministic, like the browser)
         presses: (opts.presses ?? []).map((p) => ({ idx: { A: C.BtnA, B: C.BtnB, C: C.BtnC }[p.button], at: p.t * 1e6 })),
+        latchStartA: arena.mode === "push-pull",
       },
     });
     w.on("message", (m: FromRobot) => {
       if (m.type === "stdout") {
-        for (const line of m.text.replace(/\n$/, "").split("\n")) {
+        for (const line of output[slot].feed(m.text)) {
           const s = `[${m.t.toFixed(3)}s R${slot + 1}] ${line}`;
           log.push(s);
           if (opts.echo) console.log(s);
         }
       } else if (m.type === "done") {
+        const rest = output[slot].flush();
+        if (rest) log.push(`[${m.t.toFixed(3)}s R${slot + 1}] ${rest}`);
         done[slot] = true;
         errors[slot] = m.error;
       }
@@ -128,8 +137,13 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
   const maxWall = Number(process.env.SPARK_MAX_WALL_MS ?? 180_000);
   let lastDebug = 0;
   let lastTrace = -1;
+  let liveStartSent = false;
   // advance the world in chunks and let Node handle worker messages in between
   while (world.tUs < limit) {
+    if (!liveStartSent && opts.liveStartAt !== undefined && world.tUs >= opts.liveStartAt * 1e6) {
+      world.startSignal();
+      liveStartSent = true;
+    }
     if (performance.now() - t0 > maxWall) {
       log.push(`aborted: wall-clock limit ${maxWall} ms`);
       break;
@@ -172,6 +186,7 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
   await new Promise((r) => setTimeout(r, 20));
   for (const w of workers) await w.terminate();
   const res: MatchResult = {
+    robots: world.snapshot(0).robots,
     t: world.tUs / 1e6,
     out: world.robots.map((r) => r.out),
     log,

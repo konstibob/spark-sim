@@ -92,6 +92,8 @@
             <option>challenge2.py</option>
             <option>challenge3.py</option>
             <option>main.py</option>
+            <option>spark_mapping.py</option>
+            <option>spark_tof.py</option>
           </select>
           <button id="upload" class="btn" title="Open a .py file into this robot">⇧ Open</button>
           <button id="share" class="btn" title="Copy a link that opens this program — no server needed">⇪ Link</button>
@@ -181,8 +183,21 @@
             <p id="tof-info" class="hint">Enable for a live 8×8 depth image on any arena.</p>
             <div id="tof-grid" class="tof-grid" role="img" aria-label="Sensor depth image, viewed from behind the sensor"></div>
             <div id="tof-legend" class="tof-legend hidden"><span>near · 20 mm</span><span>far · 4000 mm</span></div>
-            <p class="tof-note">Front view · distances in mm · — = no valid return.<br />Assumed mount: front centre, ≈45 mm high, looking straight ahead.<br />3D grid: reference plane at 350 mm; the floor can hide cells. All 64 zones are measured.<br />Geometric model; optical effects need hardware calibration.</p>
-            <button id="tof-docs" class="link-btn">Sensor & serial API →</button>
+            <details class="tof-note"><summary>Montage & Sensordetails</summary>Front view · distances in mm · — = no valid return.<br />Assumed mount: front centre, ≈45 mm high, looking straight ahead.<br />3D grid: reference plane at 350 mm; the floor can hide cells. All 64 zones are measured.<br />Geometric model; optical effects need hardware calibration.<br /><button id="tof-docs" class="link-btn">Sensor & serial API →</button></details>
+          </section>
+          <section class="discovery-panel" aria-label="Roboteransicht aus Sensordaten">
+            <div class="discovery-heading"><b>Roboteransicht</b><span>nur Sensordaten</span></div>
+            <div class="seg discovery-tabs" role="group" aria-label="Roboteransicht">
+              <button data-discovery-mode="map" aria-pressed="true">Discovery Map</button>
+              <button data-discovery-mode="scan" aria-pressed="false">Aktueller Scan</button>
+            </div>
+            <canvas id="discovery-map" width="360" height="360" role="img" aria-label="Geschätzte Position und beobachtete Umgebung; keine echten Kartenpositionen"></canvas>
+            <div class="discovery-legend"><span><i class="unknown"></i>unbekannt</span><span><i class="free"></i>frei beobachtet</span><span><i class="hit"></i>Hindernis</span></div>
+            <p id="discovery-pose" class="discovery-pose">x — · y — · θ —</p>
+            <p id="discovery-status" class="hint" role="status"></p>
+            <p id="discovery-meta" class="hint"></p>
+            <p class="discovery-note">Pose aus Encoder + Gyro, Karte aus ToF – auch während der Fahrt. Keine Fahrsteuerung, keine echten Kartenpositionen. Noch keine SLAM-Korrektur.</p>
+            <div class="discovery-actions"><button id="discovery-demo" class="btn">Testskript laden</button><button id="discovery-export" class="link-btn">Messdaten exportieren</button><button id="discovery-docs" class="link-btn">Wie funktioniert’s?</button></div>
           </section>
           <div class="oled-frame" title="The robot's 128×64 OLED display (Display.show())"><canvas id="oled" class="oled" width="128" height="64"></canvas></div>
           <div class="buttons">

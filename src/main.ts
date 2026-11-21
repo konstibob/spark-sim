@@ -29,6 +29,10 @@ import { Telemetry } from "./ui/telemetry.ts";
 import { Viewer, type Theme } from "./ui/viewer.ts";
 import { PushPullMap } from "./ui/push-pull-map.ts";
 import { DEFAULT_CUBES, validCubeLayout } from "./shared/push-pull.ts";
+import { parseDiscovery, RobotOutputLines } from "./shared/discovery.ts";
+import { DiscoveryView } from "./ui/discovery-view.ts";
+import mappingHelper from "./robot/python/spark_mapping.py?raw";
+import tofHelper from "./robot/python/spark_tof.py?raw";
 
 // Team colours from the spark-hpi.de palette (link blue, then the callout colours). Colour = slot position.
 const COLORS = ["#3a88fe", "#f59e0b", "#10b981", "#a78bfa"];
@@ -120,6 +124,8 @@ const topbar = document.querySelector<HTMLElement>(".topbar")!;
 new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", `${topbar.offsetHeight}px`)).observe(topbar);
 const viewer = new Viewer($("viewer"));
 const recorder = new Recorder();
+const discoveryView = new DiscoveryView();
+const robotOutput = Array.from({ length: 4 }, () => new RobotOutputLines());
 const telemetry = new Telemetry($("telemetry"));
 const buzzers = new Buzzers();
 const consoleEl = $("console");
@@ -267,7 +273,16 @@ const host = new MatchHost({
   robot(m: FromRobot) {
     switch (m.type) {
       case "stdout":
-        for (const line of m.text.replace(/\n$/, "").split("\n")) {
+        for (const line of robotOutput[m.slot].feed(m.text)) {
+          const packet = parseDiscovery(line);
+          if (packet) {
+            recorder.addDiscovery(m.slot, packet);
+            continue;
+          }
+          if (line.startsWith("@spark-map ")) {
+            log("Ungültige Roboterkarten-Telemetrie verworfen.", "warn", m.t, m.slot);
+            continue;
+          }
           tracebacks[m.slot]?.feed(line);
           const values = parsePrint(line);
           if (values) recorder.addPrint(m.slot, m.t, values);
@@ -298,6 +313,10 @@ const host = new MatchHost({
         break;
       case "done":
       case "fatal":
+        {
+          const rest = robotOutput[m.slot].flush();
+          if (rest) log(rest, "", "t" in m ? m.t : undefined, m.slot);
+        }
         if (m.type === "done") log(m.error ? `program stopped: ${m.error}` : "program finished", m.error ? "err" : "sys", m.t, m.slot);
         else log(`runtime failure: ${m.message}`, "err", undefined, m.slot);
         setRunState(m.slot, m.type === "fatal" || m.error ? "err" : "done");
@@ -342,6 +361,8 @@ function load(
   runId++;
   buzzers.stopAll();
   recorder.clear();
+  robotOutput.forEach((output) => output.flush());
+  discoveryView.render(null, [], 0);
   for (const tb of tracebacks) tb.clear();
   live = true;
   playing = false;
@@ -434,8 +455,15 @@ function showFrame(s: WorldSnapshot, replay = false) {
   $("rtf").textContent = replay ? "replay" : !recording ? "press ▶ Run" : s.realtime > 0 ? `${s.realtime.toFixed(1)}× real time` : "paused";
   renderScoreboard(s.match, scene.names, scene.colors);
   updateStartButton(s);
-  if (replay || ++frameCounter % 2 === 0) renderInspector(s.robots[selected]);
+  if (replay || ++frameCounter % 2 === 0) {
+    renderInspector(s.robots[selected]);
+    renderDiscovery(s.t);
+  }
   if (dockTab === "telemetry") drawTelemetry(live ? null : s.t, replay);
+}
+
+function renderDiscovery(t: number) {
+  discoveryView.render(recorder.discoveryAt(selected, t), recorder.discoveryPath(selected, t), t);
 }
 
 /** ⚑ Start pulses while a running match waits for its start signal; it is not needed in a race */
@@ -601,6 +629,7 @@ function showSlot(slot: number) {
   const t = live ? (lastLive?.t ?? 0) : cursor;
   renderOled(recorder.displayAt(slot, t));
   renderLeds(recorder.ledsAt(slot, t));
+  renderDiscovery(t);
   const f = live ? lastLive : recorder.frameAt(cursor);
   if (f) renderInspector(f.robots[slot]);
   if (dockTab === "telemetry") drawTelemetry(live ? null : cursor, true);
@@ -627,6 +656,7 @@ function selectRobot(slot: number) {
     if (f) renderInspector(f.robots[slot]);
     renderOled(recorder.displayAt(slot, t));
     renderLeds(recorder.ledsAt(slot, t));
+    renderDiscovery(t);
   }
 }
 
@@ -639,6 +669,7 @@ function updateInspectorHead(snapshot?: WorldSnapshot) {
   $<HTMLInputElement>("tof-enabled").checked = enabled;
   $<HTMLInputElement>("tof-enabled").disabled = !scene.fromSlots || !live;
   $<HTMLButtonElement>("tof-toggle").disabled = !scene.fromSlots || !live;
+  $<HTMLButtonElement>("discovery-demo").disabled = !scene.fromSlots || !live;
   $("tof-toggle").setAttribute("aria-pressed", String(enabled));
 }
 
@@ -656,6 +687,25 @@ function enableToF(enabled: boolean) {
 $<HTMLInputElement>("tof-enabled").onchange = (e) => enableToF((e.target as HTMLInputElement).checked);
 $("tof-toggle").onclick = () => enableToF(!slots[selected]?.tof);
 $("tof-docs").onclick = () => openDocs("vl53l5cx");
+$("discovery-docs").onclick = () => openDocs("discovery");
+$("discovery-demo").onclick = () => {
+  if (!scene.fromSlots || !live) return;
+  const select = $<HTMLSelectElement>("source");
+  slots[editorSlot].tof = true;
+  select.value = "examples/discovery.py";
+  select.dispatchEvent(new Event("change"));
+  showBanner("Einfaches Fahrskript geladen · ▶ Run, danach A / Start. Eigener Code bleibt gespeichert.", 5000);
+};
+$("discovery-export").onclick = () => {
+  const scans = recorder.discoveryScans(selected, live ? lastLive?.t ?? 0 : cursor);
+  if (!scans.length) { showBanner("Noch keine Messdaten. Erst das Testskript ausführen."); return; }
+  const blob = new Blob([scans.map((s) => JSON.stringify(s)).join("\n") + "\n"], { type: "application/x-ndjson" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "robot-scans.jsonl";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
 
 function renderTabs() {
   const tabs = $("tabs");
@@ -832,7 +882,8 @@ $<HTMLSelectElement>("download").onchange = (e) => {
   pick.value = "";
   if (!name) return;
   const s = slots[editorSlot];
-  const blob = new Blob([codeOf(s)], { type: "text/x-python" });
+  const code = name === "spark_mapping.py" ? mappingHelper : name === "spark_tof.py" ? tofHelper : codeOf(s);
+  const blob = new Blob([code], { type: "text/x-python" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = name;

@@ -4,6 +4,16 @@
 import type { Pose } from "./arenas.ts";
 import { cubesFromSeed } from "./push-pull.ts";
 
+/** The program's header asks for the VL53L5CX ("# Sensors: tof"): runs switch it on by themselves. */
+export function needsToF(code: string): boolean {
+  for (const line of code.split("\n")) {
+    if (!line.startsWith("#")) break;
+    const m = line.match(/^#\s*Sensors:\s*(.*)$/i);
+    if (m) return /\btof\b/i.test(m[1]);
+  }
+  return false;
+}
+
 /** Grid sizes the app offers: 1, 1×2, 2×2, 2×3, 3×3, 4×4 */
 export const RUN_COUNTS = [1, 2, 4, 6, 9, 16] as const;
 

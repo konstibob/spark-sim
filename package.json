@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "preview:practice": "vite preview --outDir dist-practice",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/headless.ts",
+    "test": "tsx tests/headless.ts && tsx tests/calibration.ts",
     "test:tof": "tsx tests/tof.ts",
     "test:discovery": "python3 tests/discovery.py && tsx tests/discovery.ts && tsx tests/discovery-sensors.ts",
     "test:start": "tsx tests/start-signal.ts",

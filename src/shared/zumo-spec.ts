@@ -59,7 +59,7 @@ export const ZUMO = {
   lineSensorZ: 0.003, // EST: underside of the sensor array above ground
   lineTimeout: 1024, // DB: ir_sensors.TIMEOUT
   lineWhite: 110, // EST: raw value on white melamine
-  lineGainSpread: 0.08, // EST: per-sensor sensitivity spread
+  lineGainSpread: 0.2, // measured on one stock Zumo (Push & Pull crew, 21.11.2026): floor 30–57, tape 565–1024 across the five sensors
   lineSpotSigma: 0.0012, // EST: each sensor sees a light spot, not a point (≈ 5 mm across at 3 mm height)
 
   // --- Proximity: three 56 kHz receivers on the front sensor array, four IR LEDs in two groups on the main board

@@ -106,7 +106,11 @@ export function armatureAtRoller(): number {
   return atSprocket * k * k;
 }
 
-export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[] = [], cubes = arena.cubes ?? [], cubeMass: number[] = []): string {
+/** Name and parking spot (outside the walls, on the floor plane) of the Push & Pull calibration cube */
+export const CAL_CUBE = "calcube";
+export const CAL_CUBE_PARK: Pose = { x: 0, y: -1.2, yaw: 0 };
+
+export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[] = [], cubes = arena.cubes ?? [], cubeMass: number[] = [], calCube = false): string {
   const z0 = arena.surfaceZ;
   const bodies = poses.map((pose, i) => robotBody(i, pose, z0, opts[i] ?? {})).join("");
   const eq = poses
@@ -137,6 +141,10 @@ export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[]
       <freejoint name="cube${i}_free"/>
       <geom name="cube${i}_geom" type="box" size="0.03 0.03 0.03" mass="${cubeMass[i] ?? PUSH_PULL.light}" friction="${PUSH_PULL.friction} 0.005 0.0001" contype="1" conaffinity="7" group="1"/>
     </body>`).join("")}
+    ${calCube ? `<body name="${CAL_CUBE}" pos="${CAL_CUBE_PARK.x} ${CAL_CUBE_PARK.y} ${PUSH_PULL.cube / 2 + 0.0005}">
+      <freejoint name="${CAL_CUBE}_free"/>
+      <geom name="${CAL_CUBE}_geom" type="box" size="0.03 0.03 0.03" mass="${PUSH_PULL.heavy}" friction="${PUSH_PULL.friction} 0.005 0.0001" contype="1" conaffinity="7" group="1"/>
+    </body>` : ""}
     ${bodies}
   </worldbody>
   <equality>

@@ -40,6 +40,9 @@ export interface MatchState {
   rescues?: number;
   /** Push & Pull: seconds the robot has not really moved (the referee frees it at STUCK_S) */
   stuck?: number;
+  /** Push & Pull with calibration: the crew's window now (1 … 3), 0 = between / done */
+  calWindow?: number;
+  calLabel?: string;
 }
 
 export interface RuleEvent {
@@ -111,6 +114,8 @@ export class Rules {
   private stuckWarned = false;
   /** slot the referee should free (set down elsewhere), taken by the world with takeFree() */
   private freeRequest: number | null = null;
+  /** the crew's calibration windows are running: driving before the start is allowed */
+  private calibrating = false;
 
   constructor(
     private arena: Arena,
@@ -151,6 +156,13 @@ export class Rules {
     s.phase = delay ? "countdown" : "running";
     s.countdown = delay;
     return [{ kind: "info", text: delay ? `Start signal — the robots may move in ${delay} s` : "Start signal — button A, go immediately!" }];
+  }
+
+  /** Calibration (Push & Pull): window k (1 … 3) began; 0 = the crew is done and sets the robot in the start square. */
+  calibrationWindow(k: number, label: string) {
+    this.calibrating = k > 0;
+    this.state.calWindow = k;
+    this.state.calLabel = label;
   }
 
   /** A robot that was out is back in the arena (moved there by hand). */
@@ -198,7 +210,8 @@ export class Rules {
         if (r && running && !s.ended) this.judgeStuck(ev, r, dt);
         const stuck = (s.stuck ?? 0) >= STUCK_WARN_S ? ` · STUCK ${Math.floor(s.stuck!)} s` : "";
         s.detail[0] = `${small} small · ${home} home · ${s.penalties ?? 0} penalty${stuck}`;
-        if (r?.moving && !running && !this.falseStart[0]) {
+        if (this.calibrating) s.detail[0] = `CALIBRATION ${s.calWindow}/3 · ${s.calLabel}`;
+        if (r?.moving && !running && !this.calibrating && !this.falseStart[0]) {
           this.falseStart[0] = true;
           ev.push({ kind: "warn", slot: 0, text: "False start: motors moved before A. Officially: restart with −1; a second false start scores 0. Reset this practice run." });
         }

@@ -143,7 +143,7 @@ class ProximitySensors:
     @_untimed
     def read(self):
         # Levels and pulse times are sent along, so changing brightness_levels behaves like on the robot
-        levels = list(self.brightness_levels)[:8]
+        levels = list(self.brightness_levels)[:32]
         r = _rt.rpc(_rt.OP_PROX, self._freq, self.pulse_on_time_us, self.pulse_off_time_us, len(levels), *levels)
         self.counts = [
             array("B", [int(r[1]), int(r[2])]),

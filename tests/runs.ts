@@ -4,6 +4,7 @@
 //   npx tsx tests/runs.ts prog.py                       # 16 runs, base seed 1, each run its own cube layout
 //   npx tsx tests/runs.ts prog.py --runs 50 --base-seed 7
 //   npx tsx tests/runs.ts prog.py --map layout.json     # one fixed layout (Arena-Karte export), seeds vary the noise
+//   npx tsx tests/runs.ts prog.py --calibrate 5,5       # the crew's calibration windows first (scoop to wall, cube in cm)
 //   options: --seconds 120 (round length; the run stops 0.2 s start + this)  --jobs N  --json out.json
 import { fork, type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -13,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { validCubeLayout } from "../src/shared/push-pull.ts";
 import { RUN_START_S, runCubes, runSeed, shortReason, summarizeRuns, type RunResult } from "../src/shared/runs.ts";
 import type { Pose } from "../src/shared/arenas.ts";
+import { CALIBRATION_DEFAULT, validCalibration, type CalibrationSetup } from "../src/shared/calibration.ts";
 import { runMatch } from "./match.ts";
 
 interface Job {
@@ -21,6 +23,7 @@ interface Job {
   file: string;
   seconds: number;
   cubes: Pose[];
+  calibration: CalibrationSetup | null;
 }
 
 if (process.argv.includes("--child")) {
@@ -33,6 +36,7 @@ if (process.argv.includes("--child")) {
       seed: job.seed,
       presses: [{ button: "A", t: RUN_START_S }],
       cubes: job.cubes,
+      calibration: job.calibration,
     });
     const m = r.match;
     const res: RunResult = {
@@ -69,6 +73,14 @@ async function main() {
   const seconds = Number(opt("seconds", "120"));
   const jobsN = Number(opt("jobs", String(Math.max(1, Math.min(runs, cpus().length - 1)))));
   const mapFile = opt("map", "");
+  let calibration: CalibrationSetup | null = null;
+  const calAt = args.indexOf("--calibrate");
+  if (calAt >= 0) {
+    const value = args[calAt + 1];
+    const [wallCm, cubeCm = wallCm] = /^\d/.test(value ?? "") ? value.split(",").map(Number) : [CALIBRATION_DEFAULT.wallCm, CALIBRATION_DEFAULT.cubeCm];
+    calibration = { wallCm, cubeCm };
+    if (!validCalibration(calibration)) throw new Error("--calibrate wall,cube: scoop distances 1 … 10 cm");
+  }
   let fixed: Pose[] | null = null;
   if (mapFile) {
     const map = JSON.parse(readFileSync(mapFile, "utf8"));
@@ -77,9 +89,9 @@ async function main() {
   }
   const jobs: Job[] = Array.from({ length: runs }, (_, index) => {
     const seed = runSeed(base, index);
-    return { index, seed, file, seconds, cubes: runCubes(seed, fixed) };
+    return { index, seed, file, seconds, cubes: runCubes(seed, fixed), calibration };
   });
-  console.error(`${runs} runs of ${basename(file)} · base seed ${base} · ${fixed ? `layout from ${mapFile}` : "own cube layout per run"} · max ${seconds} s each · ${jobsN} processes`);
+  console.error(`${runs} runs of ${basename(file)} · base seed ${base} · ${fixed ? `layout from ${mapFile}` : "own cube layout per run"} · max ${seconds} s each${calibration ? ` · calibration windows first (wall ${calibration.wallCm} cm, cube ${calibration.cubeCm} cm)` : ""} · ${jobsN} processes`);
   const t0 = performance.now();
   const results = await runPool(jobs, jobsN);
   console.error(`done in ${((performance.now() - t0) / 1000).toFixed(0)} s\n`);

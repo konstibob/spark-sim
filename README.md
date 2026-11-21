@@ -80,9 +80,13 @@ radio and remote control at check-in.
 
 - `challenge2.py` in the **top level**, exactly this name. Extra modules also top level (subfolders are not
   copied). Never `main.py` or `boot.py`.
-- **Keep the start block**: `from spark_start import wait_for_start` and `wait_for_start()` as the first
-  step of `main()`. The crew copies its own `spark_start.py` onto the robot when flashing. Without it
-  (practising at home) the template falls back to button A + 5 s countdown.
+- **Keep the start block**: `from spark_start import wait_for_start` and `wait_for_start()` before the round.
+  The crew copies its own `spark_start.py` onto the robot when flashing. Without it (practising at home) the
+  template falls back to button A + 5 s countdown. The calibration windows (below) come before it.
+- **Calibration (update 21.11.2026):** before the round the crew gives the robot three 10 s windows in the real
+  arena: in the start square, facing the black wall, facing a cube; one press of A each, the robot must stand
+  still when a window ends. We choose the start distance to wall and cube (1–10 cm from the scoop) and tell
+  the crew when handing in the robot. `src/examples/challenge2_calibration.py` does all three windows.
 - `motors.off()` in the `finally` block. The file runs at top level (the menu imports it): no
   `if __name__ == "__main__"`.
 - Commit directly to `main`. Other branches, unmerged PRs, USB sticks don't count. At the freeze the repo
@@ -136,6 +140,15 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   own `spark_start.py`, so the template's start block works here: `wait_for_start()` returns the moment
   button A (Start, key S, the bench, `--press A@t`) is pressed, like the Crew's IR start, with no 5 s practice
   delay. Write your program on top of the template and it copies 1:1 into the team repo.
+- **Calibration (optional, off by default):** Arena-Karte → *Kalibrierung · nur Simulation* (or
+  `--calibrate wall,cube` on `tests/match.ts` and `npm run runs`) plays the crew's three windows before the
+  start: A at 0.2 s in the start square, the robot set facing a wall (scoop 1–10 cm away) at 11.2 s, facing a
+  calibration cube at 22.2 s, back in the start square and the start signal at 33.2 s. The crew warns when
+  the robot still drives after a window; driving inside a window is no false start. Which wall the crew
+  uses is not published: the sim picks the line freest of the arena's cubes. Off, the sim's `spark_start`
+  sets `SIM_SKIP_CALIBRATION = True`; a program reads it with
+  `getattr(spark_start, "SIM_SKIP_CALIBRATION", False)` and uses its built-in values. The crew's
+  `spark_start` has no such attribute, so on the robot the windows always run.
 - Scoring is live, from each cube's rotated footprint. 12 and 30 cm are inner sizes and the
   2.5 cm tape around them counts: **3 points** completely within the small square including its
   tape (17 × 17 cm), otherwise **1 point** completely within the big square including its
@@ -166,8 +179,20 @@ The tape marks the outside of each square; the labelled dimensions are the clear
 Measured: **2.5 cm tape width**, heavy cubes **140 g**, light cubes **40 g**. Every match draws from its
 seed either **2 heavy + 3 light (75 %)** or **3 heavy + 2 light (25 %)**, in random order; the console
 lists them at load and the map shows them during the run. The Zumo carries an ESP32-C6 board
-(**+8 g, estimated**). Still assumed: **cube friction 0.35** and approximate IR reflectance (cube 0.95,
-black wall 0.04). These values are in `src/shared/push-pull.ts` and `src/world/world.ts`. The default robot pushes with its blade; it has no pulling attachment.
+(**+8 g, estimated**).
+
+Measured by the crew with their stock Zumo (`MEASURED_PROX`, `MEASURED_LINE` in `src/shared/push-pull.ts`):
+the **front proximity sensor** facing the black wall and a cube, every cm from 0 to 24 cm, with Pololu's 6
+levels and the crew's 30 fine levels, and the **line sensors** on floor and tape. The sim reproduces it: in
+this arena walls and cubes use a response fitted to those readings (`PROX_RESPONSE`, `npx tsx
+scripts/fit-prox.ts`) instead of reflectance × 1/d². The black wall reads 0 with the scoop touching, peaks at
+6–7 cm and still reads 4–5 (default) at 24 cm, so it never reaches 6; a cube reads 6 up to ~22 cm. Fine levels
+match within one count. Line sensors: floor ≈ 30–60, tape ≈ 600–1024 raw, ±20 % from sensor to sensor.
+`ProximitySensors.brightness_levels` now takes up to 32 levels (30 fine levels ≈ 34 ms per reading).
+Still assumed: **cube friction 0.35**; the side sensors, oblique angles and anything past 24 cm (falls off
+with 1/d²) are extrapolated from the straight-on measurement; prox noise is an estimate (the sim's highest
+wall value over a calibration drive comes out ≈ 1 count above the crew's 15). The default robot pushes with
+its blade; it has no pulling attachment.
 
 Headless demo (same physics and MicroPython as the browser):
 
@@ -175,6 +200,8 @@ Headless demo (same physics and MicroPython as the browser):
 npx tsx tests/match.ts src/examples/push_pull.py --arena push-pull --press A@0.2 --seconds 121 --seed 7
 # Optional: use a JSON layout exported from Arena-Karte:
 npx tsx tests/match.ts your_program.py --arena push-pull --map push-pull-map.json --press A@0.2 --seconds 121
+# With the crew's calibration windows first (scoop 5 cm from wall and cube; --seconds still counts the round):
+npx tsx tests/match.ts src/examples/challenge2_calibration.py --arena push-pull --press A@0.2 --seconds 121 --calibrate 5,5
 ```
 
 ## Self-hosting

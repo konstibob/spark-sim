@@ -2,6 +2,8 @@
 //   npx tsx tests/match.ts a.py b.py [--arena dohyo] [--seconds 20] [--press A@0.2] [--seed 1] [--jitter 1]
 // Push & Pull: --map layout.json (exported from Arena-Karte) or --cube-seed N (same layout as seed N in the app).
 // --press X@t presses button X on all robots at sim time t (seconds) for 100 ms.
+// Push & Pull: --calibrate [wall,cube] plays the crew's three calibration windows first (scoop distances in cm,
+// default 5,5): the first A becomes window 1 and the start follows 33 s later; --seconds still counts from there.
 // SPARK_TRACE=1 prints positions, motors and the sensor values the program last read, every second; SPARK_DEBUG=<ms> the lockstep channel state.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, dirname, basename } from "node:path";
@@ -13,6 +15,7 @@ import { C, makeBell, makeChannelBuffers, openChannel, type FromRobot, type Robo
 import type { MatchState } from "../src/world/rules.ts";
 import { World } from "../src/world/world.ts";
 import { cubesFromSeed, validCubeLayout } from "../src/shared/push-pull.ts";
+import { CAL_TOTAL_S, CALIBRATION_DEFAULT, validCalibration, type CalibrationSetup } from "../src/shared/calibration.ts";
 import { RobotOutputLines } from "../src/shared/discovery.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -68,6 +71,8 @@ export interface MatchOptions {
   /** stop when the rules have decided the match (default true) */
   stopWhenDecided?: boolean;
   cubes?: Pose[];
+  /** Push & Pull: the crew's calibration windows before the start (adds CAL_TOTAL_S to `seconds`) */
+  calibration?: CalibrationSetup | null;
 }
 
 export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
@@ -80,7 +85,8 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
     opts.poses ?? (opts.jitter ? jitteredStarts(arena, opts.programs.length, seed, opts.jitter) : opts.programs.map((_, i) => arena.starts[i]));
   const names = opts.programs.map((_, i) => opts.names?.[i] ?? `Robot ${i + 1}`);
   // presses are executed by the world at exact sim times (deterministic)
-  const world = new World(mj, arena, poses, { seed, proxThreshold: threshold, names, presses: opts.presses, tof: opts.tof, cubes: opts.cubes });
+  const calibration = arena.mode === "push-pull" && opts.calibration ? opts.calibration : null;
+  const world = new World(mj, arena, poses, { seed, proxThreshold: threshold, names, presses: opts.presses, tof: opts.tof, cubes: opts.cubes, calibration });
   const bellSab = makeBell();
   const bell = new Int32Array(bellSab);
   const wasmUrl = join(root, "vendor/micropython/micropython.wasm");
@@ -106,6 +112,7 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
         // the robots read scheduled presses from their own clock (deterministic, like the browser)
         presses: (opts.presses ?? []).map((p) => ({ idx: { A: C.BtnA, B: C.BtnB, C: C.BtnC }[p.button], at: p.t * 1e6 })),
         latchStartA: arena.mode === "push-pull",
+        calibration: !!calibration,
       },
     });
     w.on("message", (m: FromRobot) => {
@@ -132,7 +139,7 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
     return chan;
   });
 
-  const limit = (opts.seconds ?? 20) * 1e6;
+  const limit = ((opts.seconds ?? 20) + (calibration ? CAL_TOTAL_S : 0)) * 1e6;
   const t0 = performance.now();
   const maxWall = Number(process.env.SPARK_MAX_WALL_MS ?? 180_000);
   let lastDebug = 0;
@@ -210,6 +217,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   let jitter = 0;
   let tof = false;
   let cubes: Pose[] | undefined;
+  let calibration: CalibrationSetup | null = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--arena") arena = args[++i];
@@ -217,6 +225,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     else if (a === "--seed") seed = Number(args[++i]);
     else if (a === "--jitter") jitter = Number(args[++i]);
     else if (a === "--tof") tof = true;
+    else if (a === "--calibrate") {
+      calibration = { ...CALIBRATION_DEFAULT };
+      if (/^\d/.test(args[i + 1] ?? "")) {
+        const [wallCm, cubeCm = wallCm] = args[++i].split(",").map(Number);
+        calibration = { wallCm, cubeCm };
+      }
+      if (!validCalibration(calibration)) throw new Error("--calibrate wall,cube: scoop distances 1 … 10 cm");
+    }
     else if (a === "--cube-seed") cubes = cubesFromSeed(Number(args[++i]));
     else if (a === "--map") {
       const map = JSON.parse(readFileSync(args[++i], "utf8"));
@@ -231,7 +247,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       names.push(basename(a, ".py"));
     }
   }
-  const r = await runMatch({ programs, names, arena, seconds, seed, jitter, presses, cubes, tof: programs.map(() => tof), echo: true, stopWhenOut: false });
+  const r = await runMatch({ programs, names, arena, seconds, seed, jitter, presses, cubes, calibration, tof: programs.map(() => tof), echo: true, stopWhenOut: false });
   const m = r.match;
   console.log(`\nsim ${r.t.toFixed(2)} s in ${r.wallMs.toFixed(0)} ms (${((r.t * 1000) / r.wallMs).toFixed(1)}x real time)`);
   console.log(`result: ${m.ended ? (m.winner === null ? "draw" : `${names[m.winner]} wins`) : "undecided"} ${m.reason ? `(${m.reason})` : ""}`);

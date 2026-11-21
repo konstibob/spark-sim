@@ -113,6 +113,7 @@ function load(m: LoadMessage) {
       tweaks: m.tweaks,
       tof: m.robots.map((r) => r.setup.tof === true),
       cubes: m.cubes,
+      calibration: m.calibration,
     },
   );
   for (const r of m.robots) if (r.setup.code.trim()) world.attach(r.setup.slot, openChannel(r.buffers));

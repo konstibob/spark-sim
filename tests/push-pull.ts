@@ -1,5 +1,8 @@
 import { arenaById, jitteredStarts } from "../src/shared/arenas.ts";
-import { blocksStart, cubeMasses, ZONE, cubePoints, cubesFromSeed, DEFAULT_CUBES, PUSH_PULL, validCubeLayout, type CubeView } from "../src/shared/push-pull.ts";
+import { blocksStart, cubeMasses, ZONE, cubePoints, cubesFromSeed, DEFAULT_CUBES, FINE_LEVELS, MEASURED_LINE, MEASURED_PROX, PUSH_PULL, validCubeLayout, type CubeView } from "../src/shared/push-pull.ts";
+import { calibrationPlan, calibrationPoses, CAL_TOTAL_S, CALIBRATION_DEFAULT } from "../src/shared/calibration.ts";
+import { ZUMO } from "../src/shared/zumo-spec.ts";
+import type { Pose } from "../src/shared/arenas.ts";
 import { Rules, type RobotView } from "../src/world/rules.ts";
 import { World, type Mujoco } from "../src/world/world.ts";
 
@@ -117,4 +120,84 @@ export function checkPushPull(mj: Mujoco, check: (name: string, ok: boolean, det
     check("cube brighter than black wall", Math.max(reflective[2], reflective[3]) > Math.max(dark[2], dark[3]), `cube ${reflective[2]}/${reflective[3]}, wall ${dark[2]}/${dark[3]}`);
     wall.dispose();
   }
+
+  checkMeasuredSensors(mj, check, threshold);
+  checkCalibrationCrew(mj, check, threshold);
+}
+
+/** The fitted sensor models against the crew's stock Zumo (calibration_stock_zumo.csv) */
+function checkMeasuredSensors(mj: Mujoco, check: (name: string, ok: boolean, detail: string) => void, threshold: number) {
+  const arena = arenaById("push-pull");
+  const parked: Pose[] = [{ x: -0.7, y: -0.7, yaw: 0 }, { x: -0.7, y: 0.7, yaw: 0 }, { x: 0.7, y: -0.7, yaw: 0 }, { x: 0.7, y: 0.7, yaw: 0 }];
+  const scenes = {
+    wall: { cubes: [{ x: -0.7, y: 0, yaw: 0 }, ...parked], pose: (cm: number): Pose => ({ x: PUSH_PULL.size / 2 - ZUMO.front - cm / 100, y: 0, yaw: 0 }) },
+    cube: { cubes: [{ x: -0.2, y: 0, yaw: 0 }, ...parked], pose: (cm: number): Pose => ({ x: -0.2 - PUSH_PULL.cube / 2 - ZUMO.front - cm / 100, y: 0, yaw: 0 }) },
+  };
+  for (const kind of ["wall", "cube"] as const) {
+    const w = new World(mj, arena, [scenes[kind].pose(5)], { proxThreshold: threshold, cubes: scenes[kind].cubes });
+    let fineOff = 0;
+    const defaults: number[] = [];
+    MEASURED_PROX[kind].fine.forEach((m, cm) => {
+      w.place(0, scenes[kind].pose(cm));
+      const fine = w.readProx(w.robots[0], false, FINE_LEVELS);
+      fineOff = Math.max(fineOff, Math.abs((fine[2] + fine[3]) / 2 - (m[0] + m[1]) / 2));
+      defaults.push(Math.max(...w.readProx(w.robots[0], false).slice(2, 4)));
+    });
+    w.dispose();
+    check(`${kind} fine levels as measured`, fineOff <= 1.5, `largest difference ${fineOff} counts over 0 … 24 cm`);
+    if (kind === "wall") check("black wall never reads 6", Math.max(...defaults) <= 5 && defaults[0] === 0, `default counts ${defaults.join("")} (0 with the scoop touching)`);
+    else check("cube reads 6 up to 22 cm", defaults.slice(0, 23).every((v) => v === 6), `default counts ${defaults.join("")}`);
+  }
+  {
+    const w = new World(mj, arena, [{ x: 0.4, y: 0.35, yaw: 0 }], { seed: 3 });
+    const mean = (n = 10) => { const s = [0, 0, 0, 0, 0]; for (let k = 0; k < n; k++) w.readLine(w.robots[0], true).forEach((v, i) => (s[i] += v / n)); return s.map(Math.round); };
+    const floor = mean();
+    w.place(0, { x: PUSH_PULL.small / 2 + PUSH_PULL.tape / 2 - ZUMO.lineSensors[0][0], y: 0, yaw: 0 });
+    const tape = mean();
+    w.dispose();
+    const lo = Math.min(...MEASURED_LINE.floor) * 0.6, hi = Math.max(...MEASURED_LINE.floor) * 1.5;
+    check("line sensors floor and tape as measured", floor.every((v) => v >= lo && v <= hi) && tape.every((v) => v >= Math.min(...MEASURED_LINE.tape) * 0.7), `floor ${floor.join(",")} (measured ${MEASURED_LINE.floor.join(",")}), tape ${tape.join(",")} (measured ${MEASURED_LINE.tape.join(",")})`);
+  }
+}
+
+/** The crew's calibration windows (src/shared/calibration.ts) played by the world, without a program */
+function checkCalibrationCrew(mj: Mujoco, check: (name: string, ok: boolean, detail: string) => void, threshold: number) {
+  const arena = arenaById("push-pull");
+  {
+    let worst = Infinity;
+    for (let seed = 1; seed <= 300; seed++) {
+      const cubes = cubesFromSeed(seed);
+      const p = calibrationPoses(cubes, CALIBRATION_DEFAULT);
+      const inside = [p.wall, p.cubeRobot, p.cube].every((q) => Math.abs(q.x) < 0.8 && Math.abs(q.y) < 0.8);
+      const clear = Math.min(...cubes.flatMap((c) => [p.wall, p.cubeRobot, p.cube].map((q) => Math.hypot(c.x - q.x, c.y - q.y))));
+      worst = Math.min(worst, inside ? clear : -1);
+    }
+    check("calibration spots clear of the cubes", worst > 0.15, `300 seeds: robot and calibration cube at least ${(worst * 100).toFixed(0)} cm from every arena cube`);
+  }
+  const w = new World(mj, arena, [arena.starts[0]], { proxThreshold: threshold, autoPressA: 0.2, calibration: { wallCm: 3, cubeCm: 7 } });
+  const plan = calibrationPlan(0.2);
+  const poses = calibrationPoses(arena.cubes!, { wallCm: 3, cubeCm: 7 });
+  const at = () => { const r = w.snapshot(0).robots[0]; return { x: r.pos[0], y: r.pos[1] }; };
+  const near = (p: { x: number; y: number }, q: Pose) => Math.hypot(p.x - q.x, p.y - q.y) < 0.01;
+  w.advanceTo(300_000);
+  w.robots[0].cmd = [1500, 1500]; // driving in window 1 (after its A) is allowed
+  w.advanceTo(9_000_000);
+  w.robots[0].cmd = [0, 0];
+  w.advanceTo(Math.round((plan.places[0] + 0.3) * 1e6));
+  const wall = at();
+  w.advanceTo(Math.round((plan.places[1] + 0.3) * 1e6));
+  const cube = at();
+  const calCube = w.snapshot(0).calCube;
+  w.robots[0].cmd = [-800, -800]; // still driving when window 3 ends: the crew notices
+  w.advanceTo(Math.round((plan.ends[2] + 0.3) * 1e6));
+  w.robots[0].cmd = [0, 0];
+  w.advanceTo(Math.round((plan.start - 0.1) * 1e6));
+  const home = at();
+  const waiting = w.rules.state.phase === "waiting" && w.snapshot(0).calCube === null;
+  w.advanceTo(Math.round((plan.start + 0.5) * 1e6));
+  const texts = w.events.map((e) => e.text);
+  check("calibration: robot placed for each window", near(wall, poses.wall) && near(cube, poses.cubeRobot) && !!calCube && Math.hypot(calCube.pos[0] - poses.cube.x, calCube.pos[1] - poses.cube.y) < 0.01 && near(home, arena.starts[0]), `wall (${wall.x.toFixed(3)}, ${wall.y.toFixed(3)}), cube window (${cube.x.toFixed(3)}, ${cube.y.toFixed(3)}), back (${home.x.toFixed(3)}, ${home.y.toFixed(3)})`);
+  check("calibration: start after the windows", waiting && w.rules.state.signal !== null && Math.abs(w.rules.state.signal - (0.2 + CAL_TOTAL_S)) < 1e-9 && w.rules.state.phase === "running", `start signal at ${w.rules.state.signal} s`);
+  check("calibration: driving in a window is no false start", !texts.some((t) => /False start/.test(t)) && texts.some((t) => /window 3: the robot still drives/.test(t)), texts.filter((t) => /alibration|False/.test(t)).join(" | "));
+  w.dispose();
 }

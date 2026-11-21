@@ -3,6 +3,7 @@ import mpWasm from "../../vendor/micropython/micropython.wasm?url";
 import RobotWorker from "../robot/robot.worker.ts?worker";
 import type { RobotJob } from "../robot/runtime.ts";
 import type { Pose } from "../shared/arenas.ts";
+import type { CalibrationSetup } from "../shared/calibration.ts";
 import { arenaById } from "../shared/arenas.ts";
 import {
   C,
@@ -45,6 +46,8 @@ export interface MatchSetup {
   maxTime?: number;
   tweaks?: WorldTweaks;
   cubes?: Pose[];
+  /** Push & Pull: play the crew's calibration windows before the start (null = skip) */
+  calibration?: CalibrationSetup | null;
 }
 
 export interface HostEvents {
@@ -116,6 +119,7 @@ export class MatchHost {
       maxTime: s.maxTime,
       tweaks: s.tweaks,
       cubes: s.cubes,
+      calibration: s.calibration ?? null,
       robots: s.robots.map((r, slot) => ({
         setup: { slot, name: r.name, pose: poses[slot % poses.length], code: s.run ? r.code : "", tof: r.tof },
         buffers: buffers[slot],
@@ -152,6 +156,7 @@ export class MatchHost {
         // the scheduled start signal: the robot sees button A from its own clock (deterministic)
         presses: s.autoPressA !== null ? [{ idx: C.BtnA, at: s.autoPressA * 1e6 }] : [],
         latchStartA: arena.mode === "push-pull",
+        calibration: arena.mode === "push-pull" && !!s.calibration,
       };
       w.postMessage(job);
       this.robotWorkers[slot] = w;

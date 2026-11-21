@@ -1,5 +1,5 @@
 import { arenaById, jitteredStarts } from "../src/shared/arenas.ts";
-import { cubePoints, DEFAULT_CUBES, validCubeLayout, type CubeView } from "../src/shared/push-pull.ts";
+import { blocksStart, cubePoints, cubesFromSeed, DEFAULT_CUBES, PUSH_PULL, validCubeLayout, type CubeView } from "../src/shared/push-pull.ts";
 import { Rules, type RobotView } from "../src/world/rules.ts";
 import { World, type Mujoco } from "../src/world/world.ts";
 
@@ -13,6 +13,14 @@ export function checkPushPull(mj: Mujoco, check: (name: string, ok: boolean, det
   check("score at boundaries", cubePoints(cube(0.03, 0)) === 3 && cubePoints(cube(0.031, 0)) === 1 && cubePoints(cube(0.15, 0)) === 1 && cubePoints(cube(0.151, 0)) === 0, "fully inside / slightly outside / exactly half / under half");
   check("rotated cube area", cubePoints(cube(0.15, 0, Math.PI / 4)) === 1 && cubePoints(cube(0.151, 0, Math.PI / 4)) === 0 && cubePoints(cube(0.03, 0.03, Math.PI / 4)) === 1, "rotation-aware clipping, not centre-only scoring");
   check("map validation", validCubeLayout(DEFAULT_CUBES) && !validCubeLayout(DEFAULT_CUBES.map(() => ({ x: 0, y: 0, yaw: 0 }))) && !validCubeLayout([{ x: 2, y: 0, yaw: 0 }, ...DEFAULT_CUBES.slice(1)]), "reject overlaps and cubes outside walls");
+  {
+    const layouts = Array.from({ length: 300 }, (_, i) => cubesFromSeed(i + 1));
+    const outsideHome = (p: { x: number; y: number }) => Math.max(Math.abs(p.x), Math.abs(p.y)) > PUSH_PULL.home / 2 + PUSH_PULL.tape;
+    check("seeded cubes valid", layouts.every((l) => validCubeLayout(l) && !l.some(blocksStart) && l.every(outsideHome)), "300 seeds: five cubes, inside walls, no overlap, outside home");
+    check("seeded cubes reproducible", JSON.stringify(cubesFromSeed(42)) === JSON.stringify(cubesFromSeed(42)) && JSON.stringify(cubesFromSeed(42)) !== JSON.stringify(cubesFromSeed(43)), "same seed = same layout, next seed differs");
+    const near = layouts.flat().filter((p) => Math.max(Math.abs(p.x), Math.abs(p.y)) > PUSH_PULL.size / 2 - 0.06).length;
+    check("seeded cubes reach the walls", near > 50, `${near} of 1500 cubes within 3 cm of a wall`);
+  }
   check("fixed referee start", jitteredStarts(arena, 1, 12)[0].x === 0 && jitteredStarts(arena, 1, 32)[0].yaw === 0, "no random movement outside the 12 cm square");
   const scoring = new Rules(arena, 1);
   scoring.signal(0.2);

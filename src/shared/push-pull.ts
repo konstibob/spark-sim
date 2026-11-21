@@ -44,6 +44,38 @@ export function validCubeLayout(value: unknown): value is Pose[] {
   }));
 }
 
+/** The robot stands in the start square: a cube there would make the start impossible. */
+export function blocksStart(p: Pose): boolean {
+  return cubeFootprint({ pos: [p.x, p.y, 0.05], quat: [Math.cos(p.yaw / 2), 0, 0, Math.sin(p.yaw / 2)] }).some(([x, y]) => Math.abs(x) < 0.075 && Math.abs(y) < 0.065);
+}
+
+/**
+ * A random but reproducible layout: same seed, same five cubes (browser, bench and CLI).
+ * Cubes start outside the 30 cm home square (its tape included), may touch walls and sit in corners,
+ * and keep at least 1 cm to each other. Yaw is free (a square repeats every 90°).
+ */
+export function cubesFromSeed(seed: number): Pose[] {
+  let s = seed >>> 0 || 1;
+  const rnd = () => {
+    s = (Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0;
+    return (s >>> 8) / 16777216;
+  };
+  const P = PUSH_PULL;
+  const r = P.cube / 2;
+  const gap = 0.01;
+  const out: Pose[] = [];
+  for (let tries = 0; out.length < 5 && tries < 10_000; tries++) {
+    const yaw = rnd() * Math.PI / 2;
+    const reach = r * (Math.cos(yaw) + Math.sin(yaw)); // half the footprint's bounding box
+    const limit = P.size / 2 - reach;
+    const p = { x: (rnd() * 2 - 1) * limit, y: (rnd() * 2 - 1) * limit, yaw };
+    if (Math.max(Math.abs(p.x), Math.abs(p.y)) < P.home / 2 + P.tape + reach + gap) continue;
+    if (out.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < P.cube * Math.SQRT2 + gap)) continue;
+    out.push(p);
+  }
+  return out;
+}
+
 type Point = [number, number];
 const cross = (a: Point, b: Point, c: Point) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
 

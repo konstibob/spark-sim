@@ -3,6 +3,7 @@
 // The same job pool runs round-robin tournaments (every program against every other).
 import { arenaById, jitteredStarts, type Pose } from "../shared/arenas.ts";
 import type { WorldTweaks } from "../shared/protocol.ts";
+import { cubesFromSeed } from "../shared/push-pull.ts";
 import type { MatchState } from "../world/rules.ts";
 import { MatchHost, type RobotConfig } from "./session.ts";
 
@@ -16,6 +17,8 @@ export interface BenchConfig {
   baseSeed: number;
   tweaks?: WorldTweaks;
   cubes?: Pose[];
+  /** Push & Pull: every match gets its own layout cubesFromSeed(match seed) instead of `cubes` */
+  cubeSeeds?: boolean;
 }
 
 export interface BenchMatch {
@@ -78,7 +81,8 @@ export function benchMatchSetup(cfg: BenchConfig, index: number) {
   const swapped = cfg.b !== null && arena.maxRobots > 1 && index % 2 === 1;
   const robots = cfg.b && arena.maxRobots > 1 ? (swapped ? [cfg.b, cfg.a] : [cfg.a, cfg.b]) : [cfg.a];
   const poses = jitteredStarts(arena, robots.length, seed, arena.mode === "race" ? cfg.jitter * 0.25 : cfg.jitter);
-  return { seed, swapped, robots, poses };
+  const cubes = arena.cubes && cfg.cubeSeeds ? cubesFromSeed(seed) : cfg.cubes;
+  return { seed, swapped, robots, poses, cubes };
 }
 
 /** One headless match */
@@ -142,8 +146,8 @@ export class BenchRunner {
     if (arenaById(cfg.arena).maxRobots === 1) cfg = { ...cfg, b: null };
     const results: BenchMatch[] = [];
     const jobs = Array.from({ length: cfg.count }, (_, index) => {
-      const { seed, swapped, robots, poses } = benchMatchSetup(cfg, index);
-      return { arena: cfg.arena, robots, seed, poses, maxTime: cfg.maxTime, tweaks: cfg.tweaks, cubes: cfg.cubes, index, swapped };
+      const { seed, swapped, robots, poses, cubes } = benchMatchSetup(cfg, index);
+      return { arena: cfg.arena, robots, seed, poses, maxTime: cfg.maxTime, tweaks: cfg.tweaks, cubes, index, swapped };
     });
     await this.runJobs(jobs, (job, match, _t, done) => {
       const sA = job.swapped ? 1 : 0;

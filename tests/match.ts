@@ -1,5 +1,6 @@
 // Headless match: real MicroPython programs against each other, no browser.
 //   npx tsx tests/match.ts a.py b.py [--arena dohyo] [--seconds 20] [--press A@0.2] [--seed 1] [--jitter 1]
+// Push & Pull: --map layout.json (exported from Arena-Karte) or --cube-seed N (same layout as seed N in the app).
 // --press X@t presses button X on all robots at sim time t (seconds) for 100 ms.
 // SPARK_TRACE=1 prints positions, motors and the sensor values the program last read, every second; SPARK_DEBUG=<ms> the lockstep channel state.
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -11,7 +12,7 @@ import { arenaById, jitteredStarts, type Pose } from "../src/shared/arenas.ts";
 import { C, makeBell, makeChannelBuffers, openChannel, type FromRobot } from "../src/shared/protocol.ts";
 import type { MatchState } from "../src/world/rules.ts";
 import { World } from "../src/world/world.ts";
-import { validCubeLayout } from "../src/shared/push-pull.ts";
+import { cubesFromSeed, validCubeLayout } from "../src/shared/push-pull.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -198,6 +199,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     else if (a === "--seconds") seconds = Number(args[++i]);
     else if (a === "--seed") seed = Number(args[++i]);
     else if (a === "--jitter") jitter = Number(args[++i]);
+    else if (a === "--cube-seed") cubes = cubesFromSeed(Number(args[++i]));
     else if (a === "--map") {
       const map = JSON.parse(readFileSync(args[++i], "utf8"));
       if (map.arena !== "push-pull" || map.units !== "metres" || !validCubeLayout(map.cubes)) throw new Error("Invalid Push & Pull map; export a layout from Arena-Karte (metres).");

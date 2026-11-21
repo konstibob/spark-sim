@@ -8,9 +8,14 @@ export const PUSH_PULL = {
   small: 0.12,
   home: 0.3,
   cube: 0.06,
-  tape: 0.01, // assumed: rules do not specify the tape width
-  mass: 0.06, // assumed: tune against the real cubes
-  friction: 0.35,
+  tape: 0.025, // measured; the tape lies outside small/home and counts as part of the square
+  heavy: 0.14, // weighed: the heavy cube
+  light: 0.04, // weighed: the light cube
+  /** assumed: how likely the referee uses 2 heavy + 3 light cubes; otherwise 3 heavy + 2 light */
+  twoHeavy: 0.75,
+  /** EST: the ESP32-C6 Pico board mounted on the Zumo, on top of ZUMO.mass (weigh the whole robot) */
+  robotExtra: 0.008,
+  friction: 0.35, // assumed
 } as const;
 
 /** Example positions, NOT the unknown referee layout. Same layout for every seed. */
@@ -25,6 +30,32 @@ export const DEFAULT_CUBES: readonly Pose[] = [
 export interface CubeView {
   pos: [number, number, number];
   quat: [number, number, number, number]; // MuJoCo: w, x, y, z
+  /** kg */
+  mass?: number;
+}
+
+/** Uniform [0, 1) numbers, reproducible per seed. */
+function seeded(seed: number) {
+  let s = seed >>> 0 || 1;
+  return () => {
+    s = (Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0;
+    return (s >>> 8) / 16777216;
+  };
+}
+
+/**
+ * Masses of the five cubes for one match: 2 heavy + 3 light (PUSH_PULL.twoHeavy), else 3 heavy + 2 light,
+ * in random order. Reproducible per match seed, independent of the layout (a hand-placed map gets them too).
+ */
+export function cubeMasses(seed: number): number[] {
+  const rnd = seeded(Math.imul(seed, 0x9e3779b1) ^ 0x5bd1e995);
+  const heavy = rnd() < PUSH_PULL.twoHeavy ? 2 : 3;
+  const out = [0, 1, 2, 3, 4].map((i) => (i < heavy ? PUSH_PULL.heavy : PUSH_PULL.light));
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 export function validCubeLayout(value: unknown): value is Pose[] {
@@ -55,11 +86,7 @@ export function blocksStart(p: Pose): boolean {
  * and keep at least 1 cm to each other. Yaw is free (a square repeats every 90°).
  */
 export function cubesFromSeed(seed: number): Pose[] {
-  let s = seed >>> 0 || 1;
-  const rnd = () => {
-    s = (Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0;
-    return (s >>> 8) / 16777216;
-  };
+  const rnd = seeded(seed);
   const P = PUSH_PULL;
   const r = P.cube / 2;
   const gap = 0.01;
@@ -105,19 +132,22 @@ const area = (pts: Point[]) => Math.abs(pts.reduce((sum, p, i) => {
   return sum + p[0] * q[1] - p[1] * q[0];
 }, 0)) / 2;
 
+/** Scoring zones: the inner size plus the tape on both sides (a cube on the tape still counts). */
+export const ZONE = { small: PUSH_PULL.small + 2 * PUSH_PULL.tape, home: PUSH_PULL.home + 2 * PUSH_PULL.tape } as const;
+
 export function cubePoints(cube: CubeView): 0 | 1 | 3 {
   const footprint = cubeFootprint(cube);
   // A cube lifted off the board / stacked above another is not lying in the square.
   if (cube.pos[2] > 0.02 + PUSH_PULL.cube || cube.pos[2] < 0) return 0;
-  if (footprint.every(([x, y]) => Math.abs(x) <= PUSH_PULL.small / 2 + 1e-7 && Math.abs(y) <= PUSH_PULL.small / 2 + 1e-7)) return 3;
+  if (footprint.every(([x, y]) => Math.abs(x) <= ZONE.small / 2 + 1e-7 && Math.abs(y) <= ZONE.small / 2 + 1e-7)) return 3;
   let clipped = footprint;
   for (const axis of [0, 1]) for (const sign of [-1, 1]) {
     const input = clipped;
     clipped = [];
     input.forEach((a, i) => {
       const b = input[(i + 1) % input.length];
-      const da = PUSH_PULL.home / 2 - sign * a[axis];
-      const db = PUSH_PULL.home / 2 - sign * b[axis];
+      const da = ZONE.home / 2 - sign * a[axis];
+      const db = ZONE.home / 2 - sign * b[axis];
       if (da >= 0) clipped.push(a);
       if ((da >= 0) !== (db >= 0)) {
         const t = da / (da - db);

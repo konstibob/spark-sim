@@ -244,6 +244,9 @@ const tracebacks = [0, 1, 2, 3].map(
 const host = new MatchHost({
   snapshot(s) {
     if (recording) recorder.addFrame(s);
+    s.robots.forEach((robot, slot) => {
+      if (robot.discovery) recorder.addSensorDiscovery(slot, robot.discovery);
+    });
     lastLive = s;
     if (live) showFrame(s);
     updateTimeline();
@@ -469,7 +472,8 @@ function showFrame(s: WorldSnapshot, replay = false) {
 }
 
 function renderDiscovery(t: number) {
-  discoveryView.render(recorder.discoveryAt(selected, t), recorder.discoveryPath(selected, t), t);
+  const frame = live ? lastLive : recorder.frameAt(t);
+  discoveryView.render(recorder.discoveryAt(selected, t), recorder.discoveryPath(selected, t), t, frame?.robots[selected]?.tof?.enabled === true);
 }
 
 /** ⚑ Start pulses while a running match waits for its start signal; it is not needed in a race */
@@ -704,7 +708,7 @@ $("discovery-demo").onclick = () => {
 };
 $("discovery-export").onclick = () => {
   const scans = recorder.discoveryScans(selected, live ? lastLive?.t ?? 0 : cursor);
-  if (!scans.length) { showBanner("Noch keine Messdaten. Erst das Testskript ausführen."); return; }
+  if (!scans.length) { showBanner("Noch keine Messdaten. VL53L5CX aktivieren und erste Messung abwarten."); return; }
   const blob = new Blob([scans.map((s) => JSON.stringify(s)).join("\n") + "\n"], { type: "application/x-ndjson" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);

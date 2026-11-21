@@ -1,7 +1,7 @@
 # Name: Mapping · einfacher Testlauf
 # Strategy: A fixed, editable sequence: forwards, turn, backwards. No autonomous exploration.
 # Strengths / weaknesses: Only this selected sample sends motor commands. The map observes sensors independently.
-#   Encoder/gyro pose and ToF map update while moving; no map-based position correction yet.
+#   Encoder/gyro pose, ToF map and scan matching (SLAM) update while moving.
 # Tests: Load Testskript in the robot view, Run, then A. Needs VL53L5CX enabled.
 # Arena: push-pull
 from zumo_2040_robot import robot
@@ -40,11 +40,12 @@ MOVES = [
 last_clock = time.ticks_us()
 elapsed = last_clock
 last_publish = -1000000
+last_grid = -1000000
 latest = None
 
 
 def sample(state, mapping):
-    global elapsed, last_clock, last_publish, latest
+    global elapsed, last_clock, last_publish, last_grid, latest
     imu.gyro.read()
     left, right = encoders.get_counts()
     tick = time.ticks_us()
@@ -62,9 +63,13 @@ def sample(state, mapping):
         capture_pose = pose.at(captured)
         if capture_pose is not None:
             discovery.observe(latest, captured, capture_pose)
-    if elapsed - last_publish >= 250000:
-        discovery.publish(elapsed, state)
+    # Pose 10x per second so the robot view moves smoothly; the larger map 2x.
+    if elapsed - last_publish >= 100000:
+        grid = elapsed - last_grid >= 500000
+        discovery.publish(elapsed, state, grid)
         last_publish = elapsed
+        if grid:
+            last_grid = elapsed
     time.sleep_ms(10)
 
 

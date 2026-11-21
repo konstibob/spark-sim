@@ -1741,6 +1741,8 @@ table.bench-table {
 .discovery-legend .unknown { background: #111b2b; }
 .discovery-legend .free { background: #243d54; }
 .discovery-legend .hit { background: #f5ab61; }
+.discovery-legend .robot { background: #3a88fe; border-color: #d8eaff; }
+.discovery-legend .path { height: 0; border: 0; border-top: 2px solid #64a9ff; }
 .discovery-pose { font: 10px / 1.6 var(--mono); margin: 8px 0; font-variant-numeric: tabular-nums; }
 .discovery-panel .hint { font-size: 10px; line-height: 1.5; margin: 5px 0; }
 .discovery-note { font-size: 10px; line-height: 1.6; opacity: 0.7; margin: 8px 0 12px; }

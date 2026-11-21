@@ -10,6 +10,7 @@ import type { Pose } from "./arenas.ts";
 import type { MatchState } from "../world/rules.ts";
 import type { ToFSnapshot } from "./vl53l5cx.ts";
 import type { CubeView } from "./push-pull.ts";
+import type { DiscoveryPacket } from "./discovery.ts";
 
 export const ST = { Idle: 0, Request: 1, Response: 2, Done: 3 } as const;
 
@@ -88,6 +89,8 @@ export interface RobotSnapshot {
   tilt: number;
   out: boolean;
   tof?: ToFSnapshot;
+  /** Passive sensor-only inspector estimate; independent of the user's program. */
+  discovery?: DiscoveryPacket;
 }
 
 export interface WorldSnapshot {

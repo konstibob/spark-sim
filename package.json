@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx tests/headless.ts",
     "test:tof": "tsx tests/tof.ts",
-    "test:discovery": "python3 tests/discovery.py && tsx tests/discovery.ts",
+    "test:discovery": "python3 tests/discovery.py && tsx tests/discovery.ts && tsx tests/discovery-sensors.ts",
     "test:start": "tsx tests/start-signal.ts",
     "runs": "tsx tests/runs.ts",
     "deploy": "npm run build && WRANGLER_SEND_METRICS=false npx --yes wrangler@4.86.0 deploy -c overlay/deploy/wrangler.jsonc",

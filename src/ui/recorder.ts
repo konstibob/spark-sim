@@ -16,6 +16,7 @@ export class Recorder {
   private yellow = new Map<number, Stamped<boolean>[]>();
   private prints = new Map<number, Stamped<Record<string, number>>[]>();
   private discovery = new Map<number, Stamped<DiscoveryPacket>[]>();
+  private sensorDiscovery = new Map<number, Stamped<DiscoveryPacket>[]>();
 
   clear() {
     this.frames = [];
@@ -24,6 +25,7 @@ export class Recorder {
     this.yellow.clear();
     this.prints.clear();
     this.discovery.clear();
+    this.sensorDiscovery.clear();
   }
 
   get start(): number {
@@ -65,14 +67,26 @@ export class Recorder {
     push(this.discovery, slot, { t: packet.t, v: { ...packet, grid } });
   }
 
+  addSensorDiscovery(slot: number, packet: DiscoveryPacket) {
+    if (this.sensorDiscovery.get(slot)?.at(-1)?.t === packet.t) return;
+    push(this.sensorDiscovery, slot, { t: packet.t, v: packet });
+  }
+
+  /** A program's own map takes precedence, including during replay. Never mix
+   * its coordinate frame/grid/path with the independent inspector estimate. */
+  private discoveryHistory(slot: number, t: number) {
+    const program = this.discovery.get(slot) ?? [];
+    return lastAtOrBefore(program, t) >= 0 ? program : this.sensorDiscovery.get(slot) ?? [];
+  }
+
   discoveryAt(slot: number, t: number) {
-    const list = this.discovery.get(slot) ?? [];
+    const list = this.discoveryHistory(slot, t);
     const index = lastAtOrBefore(list, t);
     return index >= 0 ? list[index].v : null;
   }
 
   discoveryPath(slot: number, t: number): [number, number][] {
-    const list = this.discovery.get(slot) ?? [];
+    const list = this.discoveryHistory(slot, t);
     const end = lastAtOrBefore(list, t);
     const path: [number, number][] = [];
     for (let i = 0; i <= end; i++) {
@@ -84,7 +98,7 @@ export class Recorder {
   }
 
   discoveryScans(slot: number, t: number) {
-    return discoveryScans((this.discovery.get(slot) ?? []).filter((p) => p.t <= t).map((p) => p.v));
+    return discoveryScans(this.discoveryHistory(slot, t).filter((p) => p.t <= t).map((p) => p.v));
   }
 
   printsBetween(slot: number, t0: number, t1: number): Stamped<Record<string, number>>[] {

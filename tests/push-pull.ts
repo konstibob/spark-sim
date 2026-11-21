@@ -17,8 +17,8 @@ export function checkPushPull(mj: Mujoco, check: (name: string, ok: boolean, det
     const views = five.map((p) => cube(p.x, p.y, p.yaw));
     check("five cubes fit in theory", validCubeLayout(five) && views.every((v) => cubePoints(v) === 3), "four in the corners, one turned 45° in the middle: 15 points");
   }
-  check("score at boundaries", cubePoints(cube(0.055, 0)) === 3 && cubePoints(cube(0.056, 0)) === 1 && cubePoints(cube(0.175, 0)) === 1 && cubePoints(cube(0.176, 0)) === 0, "on the tape / past its outer edge / exactly half / under half");
-  check("rotated cube area", cubePoints(cube(0.175, 0, Math.PI / 4)) === 1 && cubePoints(cube(0.176, 0, Math.PI / 4)) === 0 && cubePoints(cube(0.03, 0.03, Math.PI / 4)) === 3 && cubePoints(cube(0.05, 0.05, Math.PI / 4)) === 1, "rotation-aware clipping, not centre-only scoring");
+  check("score at boundaries", cubePoints(cube(0.055, 0)) === 3 && cubePoints(cube(0.056, 0)) === 1 && cubePoints(cube(0.145, 0)) === 1 && cubePoints(cube(0.146, 0)) === 0 && cubePoints(cube(0.175, 0)) === 0, "on the tape / past its outer edge / fully home / sticking out / half out");
+  check("rotated cube corners", cubePoints(cube(0.13, 0, Math.PI / 4)) === 1 && cubePoints(cube(0.135, 0, Math.PI / 4)) === 0 && cubePoints(cube(0.03, 0.03, Math.PI / 4)) === 3 && cubePoints(cube(0.05, 0.05, Math.PI / 4)) === 1, "rotation-aware footprint, not centre-only scoring");
   check("map validation", validCubeLayout(DEFAULT_CUBES) && !validCubeLayout(DEFAULT_CUBES.map(() => ({ x: 0, y: 0, yaw: 0 }))) && !validCubeLayout([{ x: 2, y: 0, yaw: 0 }, ...DEFAULT_CUBES.slice(1)]), "reject overlaps and cubes outside walls");
   {
     const layouts = Array.from({ length: 300 }, (_, i) => cubesFromSeed(i + 1));

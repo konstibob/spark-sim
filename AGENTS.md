@@ -15,8 +15,8 @@ whether a `challenge2.py` would score well on the real arena.
 
 Solo Zumo 2040 starts in the 12 cm tape square at the centre of a ~160 × 160 cm arena (light floor,
 **black** 10 cm walls, black tape squares of 12 cm and 30 cm). Five reflective 6 cm cubes stand in the same
-(unpublished) spots for every team. 2 minutes. A cube completely inside the 12 cm square = 3 points, at least
-half inside the 30 cm square = 1 point; the 2.5 cm tape counts as part of each square, so 4 cubes fit (13 points,
+(unpublished) spots for every team. 2 minutes. A cube completely inside the 12 cm square = 3 points, completely
+inside the 30 cm square = 1 point; the 2.5 cm tape counts as part of each square, so 4 cubes fit (13 points,
 15 in theory). Green blinking ends the round early; on equal points the
 shorter time wins. Penalties: early move −1 (twice = 0), stuck 10 s −1 (twice ends), leaving the arena −2,
 touching −1. No radio on the robot, no remote control, only shop parts, max 500 g.

@@ -46,6 +46,17 @@
         <button id="start" class="btn" title="Start signal (S): button A on every robot like the referee's start; they may move 5 s later. Without a running match it starts one.">⚑ Start</button>
         <button id="stop" class="btn" title="Stop the programs (Space · Ctrl+.)" aria-label="Stop">■<span class="bl"> Stop</span></button>
         <button id="reset" class="btn" title="Robots back to their start positions (R)" aria-label="Reset">↺<span class="bl"> Reset</span></button>
+        <span class="runs-group hidden" id="runs-group">
+          <button id="runs-btn" class="btn" title="Run the editor robot's program several times at once, each run its own world and cube layout; results with a points chart" aria-label="Runs">▦<span class="bl"> Runs</span></button>
+          <select id="runs-count" aria-label="How many runs at once" title="How many runs at once (grid 1, 2×1, 2×2, 3×2, 3×3, 4×4)">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="4">4</option>
+            <option value="6">6</option>
+            <option value="9">9</option>
+            <option value="16" selected>16</option>
+          </select>
+        </span>
       </div>
       <div class="seg" id="speed" role="group" aria-label="Speed">
         <button data-speed="0" title="Pause">❚❚</button>

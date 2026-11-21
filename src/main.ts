@@ -12,6 +12,8 @@ import "./style.css";
 import { Buzzers } from "./ui/audio.ts";
 import { BenchPanel } from "./ui/bench-panel.ts";
 import { benchMatchSetup } from "./ui/bench.ts";
+import { RunsGrid } from "./ui/runs-grid.ts";
+import { RUN_START_S } from "./shared/runs.ts";
 import { brand, VERSION } from "./ui/brand.ts";
 import { helpContent } from "./ui/docs.ts";
 import { DOC_PAGES } from "./ui/docs-content.ts";
@@ -100,6 +102,8 @@ function loadSlots(raw: unknown): Slot[] {
 let slots: Slot[] = loadSlots(store.get<unknown>(slotKey(), defaultSlots()));
 let selected = 0;
 let speed = 1;
+/** the Runs grid (created further down; load() closes it when a match takes the stage) */
+let runsGrid: RunsGrid | undefined;
 /** give the start signal right after Run (off: the user gives it with ⚑ Start, like a referee) */
 let autoStart = store.get<unknown>("autostart", false) === true;
 function loadTweaks(raw: unknown): WorldTweaks {
@@ -357,7 +361,9 @@ function load(
   if (run) robots.forEach((r, i) => !r.code.trim() && liveDone.add(i));
   const arena = arenaById(scene.arena);
   $("arena-map").classList.toggle("hidden", arena.mode !== "push-pull");
+  $("runs-group").classList.toggle("hidden", arena.mode !== "push-pull");
   if (arena.mode !== "push-pull") pushPullMap.dialog.close();
+  if (runsGrid?.active) runsGrid.close();
   viewer.setArena(arena);
   viewer.setRobots(robots.map((r, i) => ({ name: r.name, color: scene.colors[i] })));
   if (scene.fromSlots) selected = editorSlot;
@@ -1037,6 +1043,7 @@ function segmented(id: string, onPick: (b: HTMLButtonElement) => void) {
 segmented("speed", (b) => {
   speed = Number(b.dataset.speed);
   host.setSpeed(speed);
+  runsGrid?.setSpeed(speed);
   if (speed === 0 || !isFinite(speed)) buzzers.stopAll();
 });
 segmented("pixel-mode", (b) => {
@@ -1207,6 +1214,27 @@ const bench = new BenchPanel($("bench"), {
     showBanner(`Bench match ${index + 1}${cfg.cubeSeeds ? ` · cube seed ${setup.seed}` : ""}${cfg.arena !== arenaId ? ` on ${arenaById(cfg.arena).name}` : ""} — Reset returns to your robots`, 3500);
   },
 });
+
+// ---------------------------------------------------------------- runs: N worlds at once in a grid
+runsGrid = new RunsGrid({
+  robot: () => {
+    const s = slots[editorSlot] ?? slots[0];
+    return { name: s.name, code: codeOf(s), tof: s.tof };
+  },
+  arena: () => arenaId,
+  tweaks: () => tweaks,
+  layout: () => cubeLayout.map((p) => ({ ...p })),
+  speed: () => speed,
+  stopMain: () => stop("runs started"),
+  log: (text) => log(text, "sys"),
+  open(run) {
+    // exactly this run (seed, cubes, World settings, start signal at 0.2 s) in the 3D view
+    load(true, { seed: run.seed, robots: [run.robot], label: `run ${run.index + 1}`, startAt: RUN_START_S, arena: run.arena, tweaks: run.tweaks, cubes: run.cubes, poses: arenaById(run.arena).starts.slice(0, 1) });
+    showBanner(`Run ${run.index + 1} · seed ${run.seed} — Reset returns to your robots`, 3500);
+  },
+});
+$("viewer").append(runsGrid.el);
+$("runs-btn").onclick = () => runsGrid?.start(Number(($("runs-count") as HTMLSelectElement).value));
 
 // ---------------------------------------------------------------- workspace layout
 const layout = new Layout(

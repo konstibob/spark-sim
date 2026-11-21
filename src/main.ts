@@ -36,6 +36,7 @@ import { parseDiscovery, RobotOutputLines } from "./shared/discovery.ts";
 import { DiscoveryView } from "./ui/discovery-view.ts";
 import mappingHelper from "./robot/python/spark_mapping.py?raw";
 import tofHelper from "./robot/python/spark_tof.py?raw";
+import pilotHelper from "./robot/python/spark_pilot.py?raw";
 
 // Team colours from the spark-hpi.de palette (link blue, then the callout colours). Colour = slot position.
 const COLORS = ["#3a88fe", "#f59e0b", "#10b981", "#a78bfa"];
@@ -766,10 +767,13 @@ function renderSourceSelect() {
   sel.replaceChildren();
   sel.add(new Option("✎ My code", CUSTOM));
   const mode = arenaById(arenaId).mode;
-  const cats = [...new Set(BOTS.map((b) => b.category))].sort((a, b) => (a === "examples" ? -1 : b === "examples" ? 1 : 0));
+  const first = ["examples", "algorithms"];
+  const rank = (c: string) => (first.includes(c) ? first.indexOf(c) : first.length);
+  const cats = [...new Set(BOTS.map((b) => b.category))].sort((a, b) => rank(a) - rank(b));
   for (const c of cats) {
     const g = document.createElement("optgroup");
-    const fits = c === "examples" || c === mode || (mode === "race" && c === "line") || (mode === "free" && c !== "examples");
+    const fits = c === "examples" || c === mode || (mode === "race" && c === "line") || (mode === "free" && c !== "examples")
+      || (c === "algorithms" && mode === "push-pull");
     g.label = (CATEGORY_LABEL[c] ?? c) + (fits ? "" : " (other arena)");
     for (const b of BOTS.filter((x) => x.category === c)) {
       const stars = b.difficulty ? " " + "★".repeat(b.difficulty) : "";
@@ -796,7 +800,7 @@ function renderSourceInfo() {
     const b = BOT_BY_ID[s.source];
     if (!b) return;
     const t = document.createElement("b");
-    t.textContent = b.category === "examples" ? "Example. " : "House bot. ";
+    t.textContent = b.category === "examples" ? "Example. " : b.category === "algorithms" ? "Algorithmus. " : "House bot. ";
     const text = document.createElement("div");
     text.className = "text";
     text.append(t, document.createTextNode(b.strategy || ""));
@@ -842,6 +846,12 @@ $<HTMLSelectElement>("source").onchange = (e) => {
   const wasDefaultName = s.source !== CUSTOM ? s.name === BOT_BY_ID[s.source]?.name : /^Robot \d$/.test(s.name);
   s.source = v;
   if (v !== CUSTOM && wasDefaultName) s.name = BOT_BY_ID[v]?.name ?? s.name;
+  // A program that needs the depth sensor ("# Sensors: tof") gets it switched on with it.
+  if (BOT_BY_ID[v]?.sensors.includes("tof") && !s.tof) {
+    if (editorSlot === selected && scene.fromSlots && live) enableToF(true); // also opens the robot view
+    else s.tof = true;
+    showBanner("VL53L5CX eingeschaltet: dieses Programm braucht den ToF-Sensor.", 3500);
+  }
   states[editorSlot] = undefined;
   saveSlots();
   showSlot(editorSlot);
@@ -904,7 +914,8 @@ $<HTMLSelectElement>("download").onchange = (e) => {
   pick.value = "";
   if (!name) return;
   const s = slots[editorSlot];
-  const code = name === "spark_mapping.py" ? mappingHelper : name === "spark_tof.py" ? tofHelper : codeOf(s);
+  const helpers: Record<string, string> = { "spark_mapping.py": mappingHelper, "spark_tof.py": tofHelper, "spark_pilot.py": pilotHelper };
+  const code = helpers[name] ?? codeOf(s);
   const blob = new Blob([code], { type: "text/x-python" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);

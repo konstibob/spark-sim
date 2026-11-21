@@ -6,13 +6,14 @@
 //   npx tsx tests/runs.ts prog.py --map layout.json     # one fixed layout (Arena-Karte export), seeds vary the noise
 //   npx tsx tests/runs.ts prog.py --calibrate 5,5       # the crew's calibration windows first (scoop to wall, cube in cm)
 //   options: --seconds 120 (round length; the run stops 0.2 s start + this)  --jobs N  --json out.json
+//            --tof (VL53L5CX on; automatic for programs whose header says "# Sensors: tof")
 import { fork, type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validCubeLayout } from "../src/shared/push-pull.ts";
-import { RUN_START_S, runCubes, runSeed, shortReason, summarizeRuns, type RunResult } from "../src/shared/runs.ts";
+import { needsToF, RUN_START_S, runCubes, runSeed, shortReason, summarizeRuns, type RunResult } from "../src/shared/runs.ts";
 import type { Pose } from "../src/shared/arenas.ts";
 import { CALIBRATION_DEFAULT, validCalibration, type CalibrationSetup } from "../src/shared/calibration.ts";
 import { runMatch } from "./match.ts";
@@ -23,6 +24,7 @@ interface Job {
   file: string;
   seconds: number;
   cubes: Pose[];
+  tof: boolean;
   calibration: CalibrationSetup | null;
 }
 
@@ -36,6 +38,7 @@ if (process.argv.includes("--child")) {
       seed: job.seed,
       presses: [{ button: "A", t: RUN_START_S }],
       cubes: job.cubes,
+      tof: [job.tof],
       calibration: job.calibration,
     });
     const m = r.match;
@@ -65,7 +68,7 @@ async function main() {
   };
   const file = args.find((a, i) => a.endsWith(".py") && !args[i - 1]?.startsWith("--"));
   if (!file) {
-    console.error("usage: npx tsx tests/runs.ts prog.py [--runs 16] [--base-seed 1] [--map layout.json] [--seconds 120] [--jobs N] [--json out.json]");
+    console.error("usage: npx tsx tests/runs.ts prog.py [--runs 16] [--base-seed 1] [--map layout.json] [--seconds 120] [--jobs N] [--json out.json] [--tof]");
     process.exit(2);
   }
   const runs = Number(opt("runs", "16"));
@@ -73,6 +76,7 @@ async function main() {
   const seconds = Number(opt("seconds", "120"));
   const jobsN = Number(opt("jobs", String(Math.max(1, Math.min(runs, cpus().length - 1)))));
   const mapFile = opt("map", "");
+  const tof = args.includes("--tof") || needsToF(readFileSync(file, "utf8"));
   let calibration: CalibrationSetup | null = null;
   const calAt = args.indexOf("--calibrate");
   if (calAt >= 0) {
@@ -89,9 +93,9 @@ async function main() {
   }
   const jobs: Job[] = Array.from({ length: runs }, (_, index) => {
     const seed = runSeed(base, index);
-    return { index, seed, file, seconds, cubes: runCubes(seed, fixed), calibration };
+    return { index, seed, file, seconds, cubes: runCubes(seed, fixed), tof, calibration };
   });
-  console.error(`${runs} runs of ${basename(file)} · base seed ${base} · ${fixed ? `layout from ${mapFile}` : "own cube layout per run"} · max ${seconds} s each${calibration ? ` · calibration windows first (wall ${calibration.wallCm} cm, cube ${calibration.cubeCm} cm)` : ""} · ${jobsN} processes`);
+  console.error(`${runs} runs of ${basename(file)} · base seed ${base} · ${fixed ? `layout from ${mapFile}` : "own cube layout per run"} · max ${seconds} s each${calibration ? ` · calibration windows first (wall ${calibration.wallCm} cm, cube ${calibration.cubeCm} cm)` : ""} · ${jobsN} processes${tof ? " · VL53L5CX on" : ""}`);
   const t0 = performance.now();
   const results = await runPool(jobs, jobsN);
   console.error(`done in ${((performance.now() - t0) / 1000).toFixed(0)} s\n`);

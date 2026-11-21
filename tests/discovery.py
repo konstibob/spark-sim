@@ -1,7 +1,10 @@
 """Analytic tests for the portable estimator; no physics or simulator pose available."""
+import io
+import json
 import sys
 import math
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -221,6 +224,97 @@ class MappingTests(unittest.TestCase):
         for seq in range(3, 10):
             m.observe(cube_frame(cube_cols=(), sequence=seq), seq * 100000)
         self.assertEqual(m.cubes, [])
+
+
+class MapQueryTests(unittest.TestCase):
+    """The map as a data structure for driving programs."""
+
+    def mark(self, m, x, y, value=3):
+        m._mark(m._cell(x, y), value)
+
+    def test_hits_and_groups(self):
+        m = DiscoveryMap(Odometry())
+        self.mark(m, 0.40, 0.0)
+        self.mark(m, 0.45, 0.0)   # neighbour cell: same group
+        self.mark(m, -0.30, 0.30)
+        hits = list(m.hits())
+        self.assertEqual(len(hits), 3)
+        groups = sorted(m.obstacles(), key=lambda g: -g[2])
+        self.assertEqual([g[2] for g in groups], [2, 1])
+        self.assertAlmostEqual(groups[0][0], 0.45, places=3)  # cells centred at 0.425 and 0.475
+        self.assertEqual(len(m.obstacles(min_cells=2)), 1)
+        self.assertTrue(m.occupied(0.41, -0.01))  # same cell as (0.40, 0.0)
+        self.assertTrue(m.unknown(0.0, 0.5))
+        self.assertIsNone(m.value(5, 5))
+
+    def test_path_clear_radius_and_ignore(self):
+        m = DiscoveryMap(Odometry())
+        self.mark(m, 0.30, 0.10)
+        self.assertTrue(m.path_clear(0, 0, 0.6, 0))  # 10 cm beside the line
+        self.assertFalse(m.path_clear(0, 0, 0.6, 0, radius=0.08))
+        self.assertTrue(m.path_clear(0, 0, 0.6, 0, radius=0.08, ignore=(0.3, 0.1, 0.05)))
+        self.assertTrue(m.path_clear(0, 0, 0.2, 0, radius=0.08), 'segment ends before the obstacle')
+
+    def test_frontiers_follow_seen_free_space(self):
+        m = DiscoveryMap(Odometry())
+        self.assertEqual(m.frontiers(), [])
+        m.observe(frame(), 1000000)
+        self.assertTrue(m.seen_free(0.25, -0.02))
+        self.assertGreater(len(m.frontiers(min_cells=1)), 0)
+
+    def test_forget_returns_cells_to_unknown(self):
+        m = DiscoveryMap(Odometry())
+        for _ in range(4):
+            self.mark(m, 0.4, 0.0)
+        self.assertEqual(m.confident, 1)
+        m.forget(0.4, 0.0, 0.05)
+        self.assertTrue(m.unknown(0.4, 0.0))
+        self.assertEqual(m.confident, 0)
+        self.assertEqual(set(m.packet(0, 'x')['grid']), {'0'})
+
+    def test_grid_text_stays_in_step_with_cells(self):
+        odom = Odometry()
+        m = DiscoveryMap(odom)
+        for seq in range(1, 30):
+            odom.heading = seq * 0.2
+            m.observe(room_frame(0, 0, odom.heading, seq), seq * 66000)
+        expected = ''.join('2' if v > 0 else '1' if v < 0 else '0' for v in m.cells)
+        self.assertEqual(m.packet(0, 'x')['grid'], expected)
+
+    def test_publish_prints_the_grid_in_pieces_of_one_line(self):
+        m = DiscoveryMap(Odometry())
+        self.mark(m, 0.4, 0.0)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            m.publish(1000000, 'scan')
+            m.publish(1100000, 'scan')  # nothing new: pose only
+        first, second = out.getvalue().splitlines()
+        self.assertTrue(first.startswith('@spark-map '))
+        packet = json.loads(first[11:])
+        self.assertEqual(packet['grid'].count('2'), 1)
+        self.assertEqual(len(packet['grid']), m.SIZE ** 2)
+        self.assertNotIn('grid', json.loads(second[11:]))
+
+    def test_odometry_history_ring_wraps(self):
+        p = Odometry(counts_per_m=1000)
+        n = Odometry.HISTORY
+        for k in range(n + 50):
+            p.update(k, k, 0, k * 1000)
+        self.assertIsNone(p.at(10 * 1000), 'oldest samples were overwritten')
+        x, y, h = p.at((n + 40) * 1000 + 500)
+        self.assertAlmostEqual(x, (n + 40.5) / 1000, places=5)
+        p.clear_history()
+        self.assertIsNone(p.at((n + 40) * 1000))
+
+    def test_reset_pose_keeps_the_map(self):
+        p = Odometry()
+        m = DiscoveryMap(p)
+        self.mark(m, 0.4, 0.0)
+        p.x, p.y, p.heading = 0.3, -0.2, 1.0
+        m.correction = (0.01, 0.0, 0.02)
+        m.reset_pose()
+        self.assertEqual(m.estimate(), (0.0, 0.0, 0.0))
+        self.assertTrue(m.occupied(0.4, 0.0))
 
 
 if __name__ == '__main__':

@@ -51,6 +51,8 @@ touching −1. No radio on the robot, no remote control, only shop parts, max 50
   direction; the second time ends the round. A good program notices the lift and localises again from the start pose.
 - Don't recommend the ESP32 bridge for the event: an ESP32 with Wi-Fi/Bluetooth is forbidden by the rules.
 - Keep the simulator deterministic per seed. A new random source must come from the seed.
+- Robot MicroPython runs on a ~190 KB heap that fragments: no `math.hypot`, avoid big temporary strings/lists in
+  loops (preallocate `array`/`bytearray`), and check new algorithms over many layouts, not one.
 
 ## Commands
 
@@ -69,6 +71,8 @@ SPARK_TRACE=1 npx tsx tests/match.ts ...                                        
 npm run runs -- prog.py --runs 16 --base-seed 1            # each run its own cube layout
 npm run runs -- prog.py --runs 50 --map layout.json        # one fixed layout, seeds vary the noise
 npm run runs -- prog.py --runs 16 --calibrate 5,5          # with the calibration windows
+npm run runs -- src/algorithms/nearest_cube.py --runs 32   # ToF on automatically ("# Sensors: tof"), or pass --tof
+npm run test:algorithms                                    # every src/algorithms/*.py: template rules + one full round
 ```
 
 Run `npm test` and `npm run typecheck` before you say a change works.
@@ -85,6 +89,8 @@ Run `npm test` and `npm run typecheck` before you say a change works.
 | `src/world/world.ts` | Physics, motors, sensors (prox reflectance per material), lockstep scheduler |
 | `src/robot/python/` | Simulated `zumo_2040_robot`, `spark_start`, MicroPython runtime shims |
 | `src/examples/` | Example programs, auto-listed in the UI (header comments `# Name:` etc.) |
+| `src/algorithms/` | Challenge 2 strategies, listed as "Challenge 2 · Algorithmen"; `# Sensors: tof` turns the ToF on; checked by `npm run test:algorithms` |
+| `src/robot/python/spark_pilot.py` | Portable sensor loop + motion primitives + lift handling on top of `spark_mapping.py` (map queries) |
 | `src/ui/bench.ts`, `bench-panel.ts` | Parallel headless match pool (test bench) |
 | `src/shared/runs.ts` | Seeds, layouts and result summary shared by the Runs grid and `tests/runs.ts` |
 | `src/ui/runs-grid.ts` | ▦ Runs: N live worlds in a grid, results column with a points histogram |

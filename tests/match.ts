@@ -171,7 +171,8 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
           return `R${r.slot + 1} (${(world.d.xpos[b] * 100).toFixed(0)}, ${(world.d.xpos[b + 1] * 100).toFixed(0)}) cm ${yaw.toFixed(0)}° cmd ${r.cmd} last read: prox ${r.last.prox.join("")} line ${r.last.line.join(",")} z ${(world.d.xpos[b + 2] * 1000).toFixed(1)}mm`;
         })
         .join(" | ");
-      console.log(`t=${(world.tUs / 1e6).toFixed(1)} ${pos}`);
+      const cubes = world.cubeViews().map((c) => `(${(c.pos[0] * 100).toFixed(0)}, ${(c.pos[1] * 100).toFixed(0)})`).join(" ");
+      console.log(`t=${(world.tUs / 1e6).toFixed(1)} ${pos}${cubes ? ` | cubes ${cubes}` : ""}`);
     }
     const next = Math.min(limit, world.tUs + 20_000);
     const state = world.pump(bell, next, 50);

@@ -1,6 +1,6 @@
-// Library of house bots and examples. Every .py file under src/bots/<category>/ is picked up automatically;
-// its header comment (# Name:, # Strategy:, # Strengths / weaknesses:, # Tests:, # Arena:, # Difficulty:)
-// becomes the description in the UI. In the practice build the house bots are swapped for an empty
+// Library of house bots, examples and algorithms. Every .py file under src/bots/<category>/, src/examples/ and
+// src/algorithms/ is picked up automatically; its header comment (# Name:, # Strategy:, # Strengths / weaknesses:,
+// # Tests:, # Arena:, # Difficulty:, # Sensors:) becomes the description in the UI. In the practice build the house bots are swapped for an empty
 // module at build time (see virtual:spark-house-bots in vite.config.ts), so their source is not shipped.
 import { houseBots } from "virtual:spark-house-bots";
 
@@ -13,10 +13,13 @@ export interface BotInfo {
   tests: string;
   arena: string;
   difficulty: number;
+  /** "# Sensors: tof" switches the VL53L5CX on when the program is picked */
+  sensors: string[];
   code: string;
 }
 
 const examples = import.meta.glob("../examples/*.py", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+const algorithms = import.meta.glob("../algorithms/*.py", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
 const FIELDS: Record<string, keyof BotInfo> = {
   name: "name",
@@ -26,6 +29,7 @@ const FIELDS: Record<string, keyof BotInfo> = {
   tests: "tests",
   arena: "arena",
   difficulty: "difficulty",
+  sensors: "sensors",
 };
 
 function parse(id: string, category: string, code: string): BotInfo {
@@ -56,12 +60,14 @@ function parse(id: string, category: string, code: string): BotInfo {
     tests: info.tests || "",
     arena: (info.arena || "").split(/[ ,(]/)[0],
     difficulty: Number(info.difficulty) || 0,
+    sensors: (info.sensors || "").toLowerCase().split(/[\s,]+/).filter(Boolean),
     code,
   };
 }
 
 export const BOTS: BotInfo[] = [
   ...Object.entries(examples).map(([p, code]) => parse(`examples/${p.split("/").pop()}`, "examples", code)),
+  ...Object.entries(algorithms).map(([p, code]) => parse(`algorithms/${p.split("/").pop()}`, "algorithms", code)),
   ...Object.entries(houseBots).map(([p, code]) => {
     // keys look like "/overlay/bots/<category>/<file>.py"
     const parts = p.split("/");
@@ -74,6 +80,7 @@ export const BOT_BY_ID: Record<string, BotInfo> = Object.fromEntries(BOTS.map((b
 
 export const CATEGORY_LABEL: Record<string, string> = {
   examples: "Examples (start here)",
+  algorithms: "Challenge 2 · Algorithmen",
   sumo: "Sumo house bots",
   line: "Line / race bots",
   koth: "King of the Hill bots",

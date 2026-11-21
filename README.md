@@ -242,6 +242,13 @@ node deploy/serve-practice.mjs        # serves ./dist-practice on http://localho
   There is no autonomous exploration, route choice or loop closure. For hardware, download
   `spark_mapping.py` and `spark_tof.py` alongside the program using the Download menu.
   **Messdaten exportieren** saves sensor-derived JSONL for offline SLAM comparisons.
+- **Challenge 2 · Algorithmen:** strategies in the program menu that use the Discovery Map as a data structure.
+  Every file in `src/algorithms/` appears there; `# Sensors: tof` switches the VL53L5CX on. `spark_pilot.py`
+  holds the sensor loop and motion primitives (scan, turn, drive, route around obstacles, referee-lift handling),
+  `spark_mapping.py` the map queries (`hits()`, `obstacles()`, `frontiers()`, `path_clear()`, `forget()`).
+  **Nächster Würfel → Mitte** pushes cubes home in steps and uses the tape edges as landmarks for the last push
+  (32 seeded layouts: mean 2.8 points, 0–5; assumptions: cube friction, ToF reflectance). **Vorlage** is the
+  starting point for new strategies. `npm run runs -- src/algorithms/<file>.py`, `npm run test:algorithms`.
 - **Test bench:** many headless matches in parallel → win rate with a confidence interval; watch any match again.
 - **Debugging:** a timeline to scrub every frame, telemetry strip charts, a plotter for your `print`s, a 3D
   sensor view, errors marked in the editor, autocompletion and in-app docs for the robot API.

@@ -44,7 +44,8 @@ one round of **2 minutes**.
 | at least half inside the 30 cm square | 1 |
 | anywhere else | 0 |
 
-Four cubes fit exactly into the small square, so the maximum is **13 points**. The round ends after
+The 2.5 cm tape counts as part of each square (17 × 17 cm and 35 × 35 cm): four cubes fit with room to
+spare (**13 points**), five in theory with the middle one turned 45° (**15**). The round ends after
 2 minutes, or when the robot **blinks green** to say it is done (we have to program that). Equal points:
 **the shorter time wins**, so finishing early with a green blink is worth it. Overall ranking:
 1st place gets 8 points, 8th place 1.

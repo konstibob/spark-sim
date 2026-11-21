@@ -16,7 +16,8 @@ whether a `challenge2.py` would score well on the real arena.
 Solo Zumo 2040 starts in the 12 cm tape square at the centre of a ~160 × 160 cm arena (light floor,
 **black** 10 cm walls, black tape squares of 12 cm and 30 cm). Five reflective 6 cm cubes stand in the same
 (unpublished) spots for every team. 2 minutes. A cube completely inside the 12 cm square = 3 points, at least
-half inside the 30 cm square = 1 point, max 13. Green blinking ends the round early; on equal points the
+half inside the 30 cm square = 1 point; the 2.5 cm tape counts as part of each square, so 4 cubes fit (13 points,
+15 in theory). Green blinking ends the round early; on equal points the
 shorter time wins. Penalties: early move −1 (twice = 0), stuck 10 s −1 (twice ends), leaving the arena −2,
 touching −1. No radio on the robot, no remote control, only shop parts, max 500 g.
 
@@ -31,9 +32,9 @@ touching −1. No radio on the robot, no remote control, only shop parts, max 50
 - In the simulator, `spark_start.wait_for_start()` returns the moment button A is pressed (the sim's start
   signal stands in for the Crew's IR START). On the real robot the IR START also has no delay; button A there
   is the practice start with 5 s delay.
-- Values marked as assumptions (tape width 1 cm, cube mass 60 g, cube friction 0.35, IR reflectance cube 0.95 /
-  wall 0.04 / tape 0.04 / floor 0.9) are not measured yet. Say so when a result depends on them. Teammates
-  are measuring the real sensors; measured numbers go into `src/shared/push-pull.ts`, `src/shared/zumo-spec.ts`
+- Measured: tape 2.5 cm, cubes 140 g (heavy) / 40 g (light), mix drawn per seed. Still assumptions: cube friction
+  0.35, IR reflectance cube 0.95 / wall 0.04 / tape 0.04 / floor 0.9, ESP board +8 g. Say so when a result
+  depends on the assumptions. Teammates are measuring the real sensors; measured numbers go into `src/shared/push-pull.ts`, `src/shared/zumo-spec.ts`
   and `src/world/world.ts`.
 - Don't recommend the ESP32 bridge for the event: an ESP32 with Wi-Fi/Bluetooth is forbidden by the rules.
 - Keep the simulator deterministic per seed. A new random source must come from the seed.

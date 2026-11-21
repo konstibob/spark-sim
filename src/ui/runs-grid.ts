@@ -26,9 +26,9 @@ export interface RunsHost {
 
 /** columns × rows per run count */
 const GRID: Record<number, [number, number]> = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2], 9: [3, 3], 16: [4, 4] };
-/** Push & Pull points range: −3 (stuck −1, left the arena −2, no cube) … 13 */
+/** Push & Pull points range: −3 (stuck −1, left the arena −2, no cube) … 15 (five cubes in the small square) */
 const MIN_POINTS = -3;
-const MAX_POINTS = 13;
+const MAX_POINTS = 15;
 
 interface Run {
   index: number;

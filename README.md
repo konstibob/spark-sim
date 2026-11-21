@@ -41,7 +41,7 @@ one round of **2 minutes**.
 | Where a cube lies at the end | Points |
 |---|---|
 | completely inside the 12 cm square | 3 |
-| at least half inside the 30 cm square | 1 |
+| completely inside the 30 cm square | 1 |
 | anywhere else | 0 |
 
 The 2.5 cm tape counts as part of each square (17 × 17 cm and 35 × 35 cm): four cubes fit with room to
@@ -138,7 +138,7 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   delay. Write your program on top of the template and it copies 1:1 into the team repo.
 - Scoring is live, from each cube's rotated footprint. 12 and 30 cm are inner sizes and the
   2.5 cm tape around them counts: **3 points** completely within the small square including its
-  tape (17 × 17 cm), otherwise **1 point** for at least half within the big square including its
+  tape (17 × 17 cm), otherwise **1 point** completely within the big square including its
   tape (35 × 35 cm). Four cubes fit with room to spare (**13 points**); five fit in theory, the
   middle one turned 45° (**15**). The score freezes after **120 seconds**
   or two green LED pulses 0.1–2 seconds apart. A steady green LED does not finish a round.

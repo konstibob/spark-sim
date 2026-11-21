@@ -395,6 +395,9 @@ export class World {
     if (this.rules.state.signal !== null) return;
     const t = this.tUs / 1e6;
     for (const e of this.rules.signal(t)) this.events.push({ ...e, t });
+    if (this.arena.mode === "push-pull") {
+      for (const r of this.robots) if (r.chan) Atomics.store(r.chan.ctl, C.StartA, 1);
+    }
     this.livePresses.push({ idx: C.BtnA, until: this.tUs + 100_000 });
   }
 

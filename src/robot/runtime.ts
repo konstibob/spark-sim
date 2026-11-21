@@ -20,6 +20,8 @@ export interface RobotJob {
   /** scheduled button presses (start signal, test presses): channel index C.BtnX and sim time in µs; each
    *  lasts 100 ms. The robot reads them from its own clock, so runs are reproducible. */
   presses?: { idx: number; at: number }[];
+  /** Push & Pull's referee start must survive imports/calibration until the program polls A. */
+  latchStartA?: boolean;
 }
 
 const PRESS_US = 100_000;
@@ -51,6 +53,9 @@ export async function runRobot(
     if (clock - lastSync >= COST_US.quantum) rpc(OP.Sync);
   };
   const presses = job.presses ?? [];
+  const scheduledStart = job.latchStartA ? presses.find((p) => p.idx === C.BtnA) : undefined;
+  let scheduledStartConsumed = false;
+  let startAUntil = -Infinity;
   // timer interrupt: Python tells when the next timer is due; the VM hook then schedules its handler
   let irqAt = Infinity;
   let irqRaised = false;
@@ -150,10 +155,23 @@ export async function runRobot(
       return r < 0 ? r + TICKS_PERIOD : r;
     },
     rpc,
-    button: (i: number) => {
+    button: (i: number, initializing = 0) => {
       settle();
       const idx = C.BtnA + i;
-      for (const p of presses) if (p.idx === idx && clock >= p.at && clock < p.at + PRESS_US) return 1;
+      if (i === 0 && job.latchStartA) {
+        const scheduled = scheduledStart && !scheduledStartConsumed && clock >= scheduledStart.at;
+        const live = Atomics.load(ctl, C.StartA) !== 0;
+        // Button.__init__ reads the baseline. Consuming/holding the start there
+        // would set last_event=True and swallow its rising edge in check().
+        if (initializing && (scheduled || live)) return 0;
+        if (scheduled || live) {
+          if (scheduled) scheduledStartConsumed = true;
+          Atomics.store(ctl, C.StartA, 0);
+          startAUntil = clock + PRESS_US;
+        }
+        if (clock < startAUntil) return 1;
+      }
+      for (const p of presses) if (p !== scheduledStart && p.idx === idx && clock >= p.at && clock < p.at + PRESS_US) return 1;
       return Atomics.load(ctl, idx); // live presses (inspector, keys, the UI start signal)
     },
     show: (hex: string, inverted: number, flipped: number) =>

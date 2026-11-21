@@ -80,6 +80,9 @@ const defaultSlots = (): Slot[] => [
 ];
 const savedCubes = store.get<unknown>("push-pull-cubes", null);
 let cubeLayout: Pose[] = validCubeLayout(savedCubes) ? savedCubes : DEFAULT_CUBES.map((p) => ({ ...p }));
+const savedSeed = store.get<unknown>("push-pull-cube-seed", null);
+/** the seed cubeLayout was generated from; null = placed by hand */
+let cubeSeed: number | null = validCubeLayout(savedCubes) && typeof savedSeed === "number" ? savedSeed : null;
 /** stored values can be from older versions or edited by hand: keep only what makes sense */
 function loadSlots(raw: unknown): Slot[] {
   const list = (Array.isArray(raw) ? raw : [])
@@ -307,9 +310,11 @@ const host = new MatchHost({
   },
 });
 
-const pushPullMap = new PushPullMap(() => cubeLayout, (poses) => {
+const pushPullMap = new PushPullMap(() => cubeLayout, () => cubeSeed, (poses, seed) => {
   cubeLayout = poses;
+  cubeSeed = seed;
   store.set("push-pull-cubes", poses);
+  store.set("push-pull-cube-seed", seed);
   load(false);
 }, (action) => host.referee(action));
 $("arena-map").onclick = () => pushPullMap.open();
@@ -1171,9 +1176,9 @@ const bench = new BenchPanel($("bench"), {
       startAt: 0.2,
       arena: cfg.arena,
       tweaks: cfg.tweaks ?? NOMINAL,
-      cubes: cfg.cubes,
+      cubes: setup.cubes,
     });
-    showBanner(`Bench match ${index + 1}${cfg.arena !== arenaId ? ` on ${arenaById(cfg.arena).name}` : ""} — Reset returns to your robots`, 3500);
+    showBanner(`Bench match ${index + 1}${cfg.cubeSeeds ? ` · cube seed ${setup.seed}` : ""}${cfg.arena !== arenaId ? ` on ${arenaById(cfg.arena).name}` : ""} — Reset returns to your robots`, 3500);
   },
 });
 

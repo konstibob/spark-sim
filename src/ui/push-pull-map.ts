@@ -1,6 +1,6 @@
 import type { Pose } from "../shared/arenas.ts";
 import type { WorldSnapshot } from "../shared/protocol.ts";
-import { cubeFootprint, cubePoints, DEFAULT_CUBES, PUSH_PULL, validCubeLayout } from "../shared/push-pull.ts";
+import { blocksStart, cubeFootprint, cubePoints, cubesFromSeed, DEFAULT_CUBES, PUSH_PULL, validCubeLayout } from "../shared/push-pull.ts";
 
 /** Editable start map; the live view always comes from physics, never a second simulation. */
 export class PushPullMap {
@@ -16,15 +16,16 @@ export class PushPullMap {
   private selected = 0;
   private draft: Pose[] | null = null;
   private controls!: HTMLFieldSetElement;
+  private seedInput!: HTMLInputElement;
 
-  constructor(private layout: () => Pose[], private change: (poses: Pose[]) => void, private referee: (action: "rescue" | "touch" | "finish") => void) {
+  constructor(private layout: () => Pose[], private seed: () => number | null, private change: (poses: Pose[], seed: number | null) => void, private referee: (action: "rescue" | "touch" | "finish") => void) {
     this.dialog.className = "pp-dialog";
     this.dialog.setAttribute("aria-label", "Challenge 2 · Arena-Karte");
     this.dialog.innerHTML = `
       <header class="pp-heading"><div><span class="label">CHALLENGE 2</span><h2>Push & Pull</h2></div><button class="btn" data-close aria-label="Karte schließen">Schließen</button></header>
       <div class="pp-specs"><span><b>160 × 160</b> cm Arena</span><span><b>30 × 30</b> cm Zuhause</span><span><b>12 × 12</b> cm Start</span><span><b>5 × 6</b> cm Würfel</span></div>
       <div class="pp-layout"><div class="pp-map-wrap"><canvas width="640" height="640" tabindex="0" aria-label="Arena-Karte. Würfel vor dem Lauf ziehen oder Koordinaten rechts eingeben."></canvas><button class="btn" data-zoom>Zentrum vergrößern</button><span class="hint">Oben = +y · rechts = +x · Start in Richtung +x</span></div>
-      <div class="pp-settings"><p data-status></p><fieldset><legend>Startaufstellung · Koordinaten in cm</legend><table><thead><tr><th>Würfel</th><th>x</th><th>y</th><th>°</th></tr></thead><tbody></tbody></table><div class="pp-actions"><button class="btn" data-default>Beispiel</button><button class="btn" data-random>Zufällig</button><button class="btn" data-export>JSON speichern</button><button class="btn" data-import>JSON laden</button><input type="file" accept=".json,application/json" hidden data-file></div></fieldset>
+      <div class="pp-settings"><p data-status></p><fieldset><legend>Startaufstellung · Koordinaten in cm</legend><table><thead><tr><th>Würfel</th><th>x</th><th>y</th><th>°</th></tr></thead><tbody></tbody></table><div class="pp-actions pp-seed"><label>Seed <input type="number" min="1" max="999999" step="1" data-seed aria-label="Seed der Würfelaufstellung"></label><button class="btn" data-random title="Neue zufällige Aufstellung; derselbe Seed ergibt immer dieselbe">Neuer Seed</button></div><div class="pp-actions"><button class="btn" data-default>Beispiel</button><button class="btn" data-export>JSON speichern</button><button class="btn" data-import>JSON laden</button><input type="file" accept=".json,application/json" hidden data-file></div></fieldset>
       <p class="pp-error" role="status" data-error></p>
       <p>Würfel vor dem Lauf ziehen. Gleiche Aufstellung für jeden Versuch; <b>Reset</b> setzt sie zurück. Die offiziellen Würfelpositionen sind noch unbekannt.</p>
       <p><b>3 Punkte</b> vollständig im 12-cm-Quadrat. <b>1 Punkt</b> mindestens halb im 30-cm-Quadrat. Vier Würfel passen innen: maximal <b>13 Punkte</b>.</p>
@@ -58,16 +59,13 @@ export class PushPullMap {
     button("[data-close]", () => this.dialog.close());
     button("[data-zoom]", () => { this.zoom = !this.zoom; this.dialog.querySelector("[data-zoom]")!.textContent = this.zoom ? "Gesamte Arena" : "Zentrum vergrößern"; this.draw(); });
     button("[data-default]", () => this.commit(DEFAULT_CUBES.map((p) => ({ ...p }))));
-    button("[data-random]", () => {
-      const poses: Pose[] = [];
-      for (let i = 0; i < 5; i++) {
-        let p: Pose;
-        do { p = { x: (Math.random() - 0.5) * 1.4, y: (Math.random() - 0.5) * 1.4, yaw: 0 }; }
-        while (Math.hypot(p.x, p.y) < 0.24 || poses.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 0.14));
-        poses.push(p);
-      }
-      this.commit(poses);
-    });
+    this.seedInput = this.dialog.querySelector<HTMLInputElement>("[data-seed]")!;
+    this.seedInput.onchange = () => {
+      const n = Math.round(this.seedInput.valueAsNumber);
+      if (Number.isFinite(n) && n >= 1) this.commit(cubesFromSeed(n), n);
+      else this.syncInputs();
+    };
+    button("[data-random]", () => { const n = 1 + Math.floor(Math.random() * 999_999); this.commit(cubesFromSeed(n), n); });
     button("[data-export]", () => {
       const blob = new Blob([JSON.stringify({ version: 1, arena: "push-pull", units: "metres", cubes: this.layout() }, null, 2)], { type: "application/json" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "push-pull-map.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -103,14 +101,15 @@ export class PushPullMap {
     this.canvas.onpointercancel = () => { this.drag = null; this.draft = null; this.draw(); };
   }
 
-  private commit(poses: unknown) {
+  /** seed: the layout came from cubesFromSeed(seed); null = placed by hand / example / file */
+  private commit(poses: unknown, seed: number | null = null) {
     if (!this.editable) return;
     if (!validCubeLayout(poses)) { this.error.textContent = "Fünf Würfel nötig: innerhalb der Wände, ohne Überlappung."; this.draw(); return; }
     // The actual robot occupies the small square at the start.
-    if (poses.some((p) => cubeFootprint({ pos: [p.x, p.y, 0.05], quat: [Math.cos(p.yaw / 2), 0, 0, Math.sin(p.yaw / 2)] }).some(([x, y]) => Math.abs(x) < 0.075 && Math.abs(y) < 0.065))) {
+    if (poses.some(blocksStart)) {
       this.error.textContent = "Die Startfläche des Roboters bitte frei lassen."; this.draw(); return;
     }
-    this.error.textContent = ""; this.snap = null; this.change(poses.map((p) => ({ ...p }))); this.syncInputs(); this.draw();
+    this.error.textContent = ""; this.snap = null; this.change(poses.map((p) => ({ ...p })), seed); this.syncInputs(); this.draw();
   }
 
   open() { this.syncInputs(); this.dialog.showModal(); this.draw(); }
@@ -120,6 +119,9 @@ export class PushPullMap {
     this.dialog.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => { b.disabled = snap.match.phase !== "running" || snap.match.ended; });
   }
   private syncInputs() {
+    const seed = this.seed();
+    this.seedInput.value = seed === null ? "" : String(seed);
+    this.seedInput.placeholder = seed === null ? "eigene" : "";
     this.layout().forEach((p, i) => { [p.x * 100, p.y * 100, p.yaw * 180 / Math.PI].forEach((v, k) => { this.inputs[i][k].value = String(+v.toFixed(2)); }); });
   }
   private draw() {
@@ -149,6 +151,6 @@ export class PushPullMap {
     const robot = this.snap?.robots[0]; const [rx, ry] = robot?.pos ?? [0, 0]; const yaw = (robot?.yaw ?? 0) * Math.PI / 180;
     ctx.save(); ctx.translate(px(rx), py(ry)); ctx.rotate(-yaw); ctx.fillStyle = "#3483f5"; ctx.fillRect(-0.05 * scale, -0.049 * scale, 0.1 * scale, 0.098 * scale); ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(0.045 * scale, 0); ctx.lineTo(0.005 * scale, -0.024 * scale); ctx.lineTo(0.005 * scale, 0.024 * scale); ctx.fill(); ctx.restore();
     ctx.textBaseline = "alphabetic";
-    this.status.textContent = this.editable ? "Aufstellung bearbeiten · Beispielpositionen anpassbar" : `${this.snap?.match.phase === "over" ? "Ergebnis" : "Live-Positionen"} · ${this.snap?.match.scores[0] ?? 0} Punkte · ${(this.snap?.match.t ?? 0).toFixed(1)} / 120 s`;
+    this.status.textContent = this.editable ? `Aufstellung bearbeiten · ${this.seed() === null ? "eigene Aufstellung" : `Seed ${this.seed()}`}` : `${this.snap?.match.phase === "over" ? "Ergebnis" : "Live-Positionen"} · ${this.snap?.match.scores[0] ?? 0} Punkte · ${(this.snap?.match.t ?? 0).toFixed(1)} / 120 s`;
   }
 }

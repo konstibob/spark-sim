@@ -24,6 +24,9 @@
 .pp-settings td { padding: 4px; }
 .pp-settings input[type=number] { width: 100%; min-width: 0; box-sizing: border-box; font: 14px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule-soft); padding: 7px 4px; }
 .pp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.pp-seed { align-items: center; }
+.pp-seed label { display: flex; align-items: center; gap: 8px; }
+.pp-seed input[type=number] { width: 9ch; }
 .pp-error { color: var(--danger); }
 .pp-settings details { border-top: 1px solid var(--rule-soft); padding-top: 12px; }
 .pp-settings summary { cursor: pointer; margin-bottom: 10px; }

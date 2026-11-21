@@ -118,11 +118,18 @@ export class BenchPanel {
     else this.selA.value = "slot:0";
     if (keepB && [...this.selB.options].some((o) => o.value === keepB)) this.selB.value = keepB;
     else this.selB.value = this.host.slots().length > 1 ? "slot:1" : "none";
-    const solo = arenaById(this.host.arena()).maxRobots === 1;
+    const arena = arenaById(this.host.arena());
+    const solo = arena.maxRobots === 1;
     if (solo) this.selB.value = "none";
     this.selB.disabled = solo;
     this.rrBtn.disabled = solo;
-    this.spread.disabled = solo;
+    // Push & Pull has one fixed referee start; the toggle varies the cube layout instead
+    const cubes = !!arena.cubes;
+    this.spread.disabled = solo && !cubes;
+    this.spread.textContent = cubes ? "Random cubes" : "Spread starts";
+    this.spread.title = cubes
+      ? "On: every match gets its own cube layout from its seed (the seed column; WATCH replays it). Off: every match uses the layout from Arena-Karte."
+      : "Random but reproducible start positions and angles for every match (A and B swap sides every second match either way)";
   }
 
   private resolve(v: string): RobotConfig | null {
@@ -147,6 +154,7 @@ export class BenchPanel {
       baseSeed: (Math.random() * 1e9) >>> 0,
       tweaks: this.host.tweaks(),
       cubes: this.host.cubes(),
+      cubeSeeds: !!arena.cubes && this.spread.getAttribute("aria-pressed") === "true",
     };
     this.runner = new BenchRunner();
     const my = ++this.token;
@@ -154,7 +162,7 @@ export class BenchPanel {
     this.busy(this.runBtn);
     this.setProgress(0);
     const matches: BenchMatch[] = [];
-    this.host.log(`bench: ${cfg.a.name} vs ${cfg.b?.name ?? "(solo)"} on ${arena.name}, ${cfg.count} matches, seed ${cfg.baseSeed}`);
+    this.host.log(`bench: ${cfg.a.name} vs ${cfg.b?.name ?? "(solo)"} on ${arena.name}, ${cfg.count} matches, seed ${cfg.baseSeed}${arena.cubes ? (cfg.cubeSeeds ? ", random cubes per match" : ", cubes from Arena-Karte") : ""}`);
     const t0 = performance.now();
     await this.runner.run(cfg, (m, done) => {
       if (my !== this.token) return;
@@ -294,6 +302,10 @@ export class BenchPanel {
       const head = el("div", undefined, "bench-summary");
       const best = Math.min(...ms.flatMap((m) => m.match.laps[0] ?? []), Infinity);
       head.textContent = `${cfg.a.name}: ⌀ score ${s.avgScoreA.toFixed(2)}${mode === "race" && isFinite(best) ? ` · best lap ${best.toFixed(2)} s` : ""}`;
+      if (mode === "push-pull" && ms.length) {
+        const sc = ms.map((m) => m.scoreA);
+        head.append(el("br"), el("span", `min ${Math.min(...sc)} · max ${Math.max(...sc)} · ⌀ ${s.avgT.toFixed(1)} s · ${cfg.cubeSeeds ? "cube layout = seed" : "same cube layout every match"}`, "muted"));
+      }
       box.append(head);
     }
     const table = el("table", undefined, "bench-table");

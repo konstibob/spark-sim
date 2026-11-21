@@ -88,7 +88,8 @@ Source: [UM2884 §2.2](https://www.st.com/resource/en/user_manual/um2884-a-guide
   material-dependent detection threshold, glass transparency, multipath, crosstalk,
   inter-zone blur, temperature drift, multi-target output, cover-glass calibration,
   rolling/sequential sub-frame acquisition, I²C firmware upload timing or ESP CPU timing.
-  The carrier and ESP do not add collision mass/geometry. All rays use existing
+  The carrier and ESP add no collision geometry; only Push & Pull adds an estimated 8 g for the
+  ESP board (`PUSH_PULL.robotExtra`). All rays use existing
   collision geometry, whose detail can differ from decorative meshes.
 
 For context, ST's 8×8 continuous-mode range table gives a typical dark range of

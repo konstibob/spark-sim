@@ -1,6 +1,6 @@
 import type { Pose } from "../shared/arenas.ts";
 import type { WorldSnapshot } from "../shared/protocol.ts";
-import { blocksStart, cubeFootprint, cubePoints, cubesFromSeed, DEFAULT_CUBES, PUSH_PULL, validCubeLayout } from "../shared/push-pull.ts";
+import { blocksStart, cubeFootprint, cubePoints, cubesFromSeed, DEFAULT_CUBES, PUSH_PULL, validCubeLayout, type CubeView } from "../shared/push-pull.ts";
 
 /** Editable start map; the live view always comes from physics, never a second simulation. */
 export class PushPullMap {
@@ -28,8 +28,8 @@ export class PushPullMap {
       <div class="pp-settings"><p data-status></p><fieldset><legend>Startaufstellung · Koordinaten in cm</legend><table><thead><tr><th>Würfel</th><th>x</th><th>y</th><th>°</th></tr></thead><tbody></tbody></table><div class="pp-actions pp-seed"><label>Seed <input type="number" min="1" max="999999" step="1" data-seed aria-label="Seed der Würfelaufstellung"></label><button class="btn" data-random title="Neue zufällige Aufstellung; derselbe Seed ergibt immer dieselbe">Neuer Seed</button></div><div class="pp-actions"><button class="btn" data-default>Beispiel</button><button class="btn" data-export>JSON speichern</button><button class="btn" data-import>JSON laden</button><input type="file" accept=".json,application/json" hidden data-file></div></fieldset>
       <p class="pp-error" role="status" data-error></p>
       <p>Würfel vor dem Lauf ziehen. Gleiche Aufstellung für jeden Versuch; <b>Reset</b> setzt sie zurück. Die offiziellen Würfelpositionen sind noch unbekannt.</p>
-      <p><b>3 Punkte</b> vollständig im 12-cm-Quadrat. <b>1 Punkt</b> mindestens halb im 30-cm-Quadrat. Vier Würfel passen innen: maximal <b>13 Punkte</b>.</p>
-      <details><summary>Modell & Schiedsrichter</summary><p>Schwarze Wände: 10 cm hoch. Band außen an den Zielquadraten. Annahmen: 1 cm Band, 60 g je Würfel, Reibwert 0,35. IR-Werte sind Näherungen. Keine Greifvorrichtung; Schieben mit der Zumo-Schaufel.</p><p>Start sofort mit A; 120 Sekunden. Zwei grüne Blinkimpulse im Abstand von 0,1–2 s beenden den Lauf. Frühstarts werden gemeldet; offiziellen Neustart und 10-s-Feststecken beurteilst du selbst.</p><div class="pp-actions" data-referee><button class="btn" data-action="rescue">Befreien −1</button><button class="btn" data-action="touch">Berührt −1 & Ende</button><button class="btn" data-action="finish">Grün bestätigt</button></div><p>Nach „Befreien“ Karte schließen und Roboter mit Shift+Ziehen versetzen. Zweites Befreien beendet den Lauf.</p></details>
+      <p>Das 2,5-cm-Band zählt zur Fläche. <b>3 Punkte</b> vollständig im kleinen Quadrat samt Band (17 × 17 cm). <b>1 Punkt</b> mindestens halb im großen Quadrat samt Band (35 × 35 cm). Vier Würfel passen mit Luft hinein: <b>13 Punkte</b>; theoretisch fünf (einer um 45° gedreht): 15.</p>
+      <details><summary>Modell & Schiedsrichter</summary><p>Schwarze Wände: 10 cm hoch. Band außen an den Zielquadraten. Band 2,5 cm. Würfel 140 g (schwer) und 40 g (leicht): pro Lauf zufällig 2 schwere + 3 leichte (75 %) oder 3 schwere + 2 leichte (25 %); die Gewichte stehen im Log und während des Laufs auf der Karte. Roboter +8 g für das ESP32-C6-Board (geschätzt). Annahme: Reibwert 0,35. IR-Werte sind Näherungen. Keine Greifvorrichtung; Schieben mit der Zumo-Schaufel.</p><p>Start sofort mit A; 120 Sekunden. Zwei grüne Blinkimpulse im Abstand von 0,1–2 s beenden den Lauf. Frühstarts werden gemeldet; offiziellen Neustart und 10-s-Feststecken beurteilst du selbst.</p><div class="pp-actions" data-referee><button class="btn" data-action="rescue">Befreien −1</button><button class="btn" data-action="touch">Berührt −1 & Ende</button><button class="btn" data-action="finish">Grün bestätigt</button></div><p>Nach „Befreien“ Karte schließen und Roboter mit Shift+Ziehen versetzen. Zweites Befreien beendet den Lauf.</p></details>
       </div></div>`;
     document.body.append(this.dialog);
     this.canvas = this.dialog.querySelector("canvas")!;
@@ -140,13 +140,16 @@ export class PushPullMap {
     }
     ctx.fillStyle = "#4c6077"; ctx.font = `${this.zoom ? 18 : 16}px sans-serif`; ctx.textAlign = "center";
     if (!this.zoom) { ctx.fillText("160 cm", W / 2, py(0.86)); ctx.save(); ctx.translate(px(-0.87), W / 2); ctx.rotate(-Math.PI / 2); ctx.fillText("160 cm", 0, 0); ctx.restore(); }
-    ctx.textAlign = "left"; ctx.fillText("30 × 30 cm · 1 P", px(0.17), py(0.17));
-    ctx.fillText("12 × 12 cm · 3 P", px(0.075), py(-0.1));
+    ctx.textAlign = "left"; ctx.fillText("30 × 30 cm + Band · 1 P", px(0.185), py(0.185));
+    ctx.fillText("12 × 12 cm + Band · 3 P", px(0.095), py(-0.11));
     const cubes = this.draft ? this.draft.map((p) => ({ pos: [p.x, p.y, 0.05] as [number, number, number], quat: [Math.cos(p.yaw / 2), 0, 0, Math.sin(p.yaw / 2)] as [number, number, number, number] })) : this.snap?.cubes ?? this.layout().map((p) => ({ pos: [p.x, p.y, 0.05] as [number, number, number], quat: [Math.cos(p.yaw / 2), 0, 0, Math.sin(p.yaw / 2)] as [number, number, number, number] }));
     cubes.forEach((cube, i) => {
       const pts = cubeFootprint(cube); ctx.beginPath(); pts.forEach(([x, y], k) => k ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y))); ctx.closePath();
       ctx.fillStyle = cubePoints(cube) === 3 ? "#75d6ad" : "#e5edf7"; ctx.strokeStyle = i === this.selected ? "#2474e7" : "#56708c"; ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
       ctx.fillStyle = "#162c47"; ctx.font = `bold ${this.zoom ? 20 : 16}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(i + 1), px(cube.pos[0]), py(cube.pos[1]));
+      // masses are drawn per run (seed), so only shown once it runs
+      const mass = (cube as CubeView).mass;
+      if (!this.editable && mass) { ctx.font = `${this.zoom ? 15 : 12}px sans-serif`; ctx.fillText(`${Math.round(mass * 1000)} g`, px(cube.pos[0]), py(cube.pos[1] - PUSH_PULL.cube * 0.75) + (this.zoom ? 0 : 6)); }
     });
     const robot = this.snap?.robots[0]; const [rx, ry] = robot?.pos ?? [0, 0]; const yaw = (robot?.yaw ?? 0) * Math.PI / 180;
     ctx.save(); ctx.translate(px(rx), py(ry)); ctx.rotate(-yaw); ctx.fillStyle = "#3483f5"; ctx.fillRect(-0.05 * scale, -0.049 * scale, 0.1 * scale, 0.098 * scale); ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(0.045 * scale, 0); ctx.lineTo(0.005 * scale, -0.024 * scale); ctx.lineTo(0.005 * scale, 0.024 * scale); ctx.fill(); ctx.restore();

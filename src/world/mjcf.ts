@@ -106,7 +106,7 @@ export function armatureAtRoller(): number {
   return atSprocket * k * k;
 }
 
-export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[] = [], cubes = arena.cubes ?? []): string {
+export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[] = [], cubes = arena.cubes ?? [], cubeMass: number[] = []): string {
   const z0 = arena.surfaceZ;
   const bodies = poses.map((pose, i) => robotBody(i, pose, z0, opts[i] ?? {})).join("");
   const eq = poses
@@ -135,7 +135,7 @@ export function buildMjcf(arena: Arena, poses: Pose[], opts: RobotModelOptions[]
     ${arena.mjcf()}
     ${cubes.map((p, i) => `<body name="cube${i}" pos="${p.x} ${p.y} ${z0 + PUSH_PULL.cube / 2 + 0.0005}" euler="0 0 ${p.yaw * 180 / Math.PI}">
       <freejoint name="cube${i}_free"/>
-      <geom name="cube${i}_geom" type="box" size="0.03 0.03 0.03" mass="${PUSH_PULL.mass}" friction="${PUSH_PULL.friction} 0.005 0.0001" contype="1" conaffinity="7" group="1"/>
+      <geom name="cube${i}_geom" type="box" size="0.03 0.03 0.03" mass="${cubeMass[i] ?? PUSH_PULL.light}" friction="${PUSH_PULL.friction} 0.005 0.0001" contype="1" conaffinity="7" group="1"/>
     </body>`).join("")}
     ${bodies}
   </worldbody>

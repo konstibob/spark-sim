@@ -9,7 +9,7 @@ import { Rules } from "./rules.ts";
 import { ToFSensor } from "./vl53l5cx.ts";
 import { VL53L5CX } from "../shared/vl53l5cx.ts";
 import { ToFSerialBridge } from "./tof-serial.ts";
-import { type CubeView, validCubeLayout } from "../shared/push-pull.ts";
+import { cubeMasses, type CubeView, PUSH_PULL, validCubeLayout } from "../shared/push-pull.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Mujoco = any;
@@ -137,6 +137,8 @@ export class World {
   readonly d: Mujoco;
   readonly robots: RobotState[] = [];
   readonly cubeBodies: number[] = [];
+  /** kg per cube, from the seed (Push & Pull) */
+  readonly cubeMass: number[] = [];
   readonly rules: Rules;
   tUs = 0;
   proxThreshold: number;
@@ -178,7 +180,11 @@ export class World {
       return { bladeGap: gap, bladeTilt: Math.max(-maxTilt, Math.min(maxTilt, rnd.gauss(ZUMO.bladeTiltSpread))) };
     };
     const cubes = arena.cubes ? (validCubeLayout(opt.cubes) ? opt.cubes : arena.cubes) : [];
-    const xml = buildMjcf(arena, poses, poses.map((_, i) => ({ grip: this.tweaks.grip, ...blade(i) })), cubes);
+    if (cubes.length) this.cubeMass.push(...cubeMasses(seed));
+    // Push & Pull: the team's Zumo carries an extra board
+    const ballastKg = cubes.length ? PUSH_PULL.robotExtra : 0;
+    const xml = buildMjcf(arena, poses, poses.map((_, i) => ({ grip: this.tweaks.grip, ballastKg, ...blade(i) })), cubes, this.cubeMass);
+    if (cubes.length) this.events.push({ kind: "info", t: 0, text: `Cubes: ${this.cubeMass.map((m, i) => `${i + 1} = ${Math.round(m * 1000)} g`).join(" · ")}` });
     try {
       mj.FS.mkdir("/spark");
     } catch {
@@ -877,9 +883,10 @@ export class World {
   }
 
   cubeViews(): CubeView[] {
-    return this.cubeBodies.map((b) => ({
+    return this.cubeBodies.map((b, i) => ({
       pos: [this.d.xpos[b * 3], this.d.xpos[b * 3 + 1], this.d.xpos[b * 3 + 2]],
       quat: [this.d.xquat[b * 4], this.d.xquat[b * 4 + 1], this.d.xquat[b * 4 + 2], this.d.xquat[b * 4 + 3]],
+      mass: this.cubeMass[i],
     }));
   }
 

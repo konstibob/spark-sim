@@ -175,7 +175,7 @@ export class Rules {
         s.scores[0] = s.cubeScores.reduce((sum, v) => sum + v, 0) - (s.penalties ?? 0);
         const small = s.cubeScores.filter((v) => v === 3).length;
         const home = s.cubeScores.filter((v) => v === 1).length;
-        s.detail[0] = `${small}/4 small · ${home} home · ${s.penalties ?? 0} penalty`;
+        s.detail[0] = `${small} small · ${home} home · ${s.penalties ?? 0} penalty`;
         const r = robots[0];
         if (r?.moving && !running && !this.falseStart[0]) {
           this.falseStart[0] = true;

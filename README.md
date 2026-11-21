@@ -43,9 +43,11 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   A starts immediately, with **no sumo countdown**. The demo drives behind the first example
   cube and pushes it into the big square. It uses known example waypoints and encoder/gyro
   odometry; adapt it for another layout. Your own MicroPython uses the normal robot APIs.
-- Scoring is live, from each cube's rotated footprint: **3 points** completely within the
-  small square, otherwise **1 point** for at least half within the big square. Four cubes fit
-  exactly in the small square: **maximum 13 points**. The score freezes after **120 seconds**
+- Scoring is live, from each cube's rotated footprint. 12 and 30 cm are inner sizes and the
+  2.5 cm tape around them counts: **3 points** completely within the small square including its
+  tape (17 × 17 cm), otherwise **1 point** for at least half within the big square including its
+  tape (35 × 35 cm). Four cubes fit with room to spare (**13 points**); five fit in theory, the
+  middle one turned 45° (**15**). The score freezes after **120 seconds**
   or two green LED pulses 0.1–2 seconds apart. A steady green LED does not finish a round.
 - **Test bench** runs the current program alone on this same saved layout across seeds and
   reports average scores; each result can be replayed.
@@ -54,9 +56,11 @@ The tape marks the outside of each square; the labelled dimensions are the clear
   and ends it. Judge the 10 seconds stuck yourself. Early motor commands produce a warning;
   official first-false-start restarts and second-false-start disqualification are manual.
 
-Assumptions to calibrate: **1 cm tape width, 60 g cube mass, cube friction 0.35** and approximate
-IR reflectance (cube 0.95, black wall 0.04). These values are in `src/shared/push-pull.ts` and
-`src/world/world.ts`. The default robot pushes with its blade; it has no pulling attachment.
+Measured: **2.5 cm tape width**, heavy cubes **140 g**, light cubes **40 g**. Every match draws from its
+seed either **2 heavy + 3 light (75 %)** or **3 heavy + 2 light (25 %)**, in random order; the console
+lists them at load and the map shows them during the run. The Zumo carries an ESP32-C6 board
+(**+8 g, estimated**). Still assumed: **cube friction 0.35** and approximate IR reflectance (cube 0.95,
+black wall 0.04). These values are in `src/shared/push-pull.ts` and `src/world/world.ts`. The default robot pushes with its blade; it has no pulling attachment.
 
 Headless demo (same physics and MicroPython as the browser):
 

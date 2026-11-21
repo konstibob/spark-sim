@@ -47,6 +47,7 @@ export interface MatchResult {
 
 export interface MatchOptions {
   programs: string[];
+  tof?: boolean[];
   names?: string[];
   arena?: string;
   seconds?: number;
@@ -74,7 +75,7 @@ export async function runMatch(opts: MatchOptions): Promise<MatchResult> {
     opts.poses ?? (opts.jitter ? jitteredStarts(arena, opts.programs.length, seed, opts.jitter) : opts.programs.map((_, i) => arena.starts[i]));
   const names = opts.programs.map((_, i) => opts.names?.[i] ?? `Robot ${i + 1}`);
   // presses are executed by the world at exact sim times (deterministic)
-  const world = new World(mj, arena, poses, { seed, proxThreshold: threshold, names, presses: opts.presses, cubes: opts.cubes });
+  const world = new World(mj, arena, poses, { seed, proxThreshold: threshold, names, presses: opts.presses, tof: opts.tof, cubes: opts.cubes });
   const bellSab = makeBell();
   const bell = new Int32Array(bellSab);
   const wasmUrl = join(root, "vendor/micropython/micropython.wasm");
@@ -192,6 +193,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   let seconds = 20;
   let seed = 1;
   let jitter = 0;
+  let tof = false;
   let cubes: Pose[] | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -199,6 +201,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     else if (a === "--seconds") seconds = Number(args[++i]);
     else if (a === "--seed") seed = Number(args[++i]);
     else if (a === "--jitter") jitter = Number(args[++i]);
+    else if (a === "--tof") tof = true;
     else if (a === "--cube-seed") cubes = cubesFromSeed(Number(args[++i]));
     else if (a === "--map") {
       const map = JSON.parse(readFileSync(args[++i], "utf8"));
@@ -213,7 +216,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       names.push(basename(a, ".py"));
     }
   }
-  const r = await runMatch({ programs, names, arena, seconds, seed, jitter, presses, cubes, echo: true, stopWhenOut: false });
+  const r = await runMatch({ programs, names, arena, seconds, seed, jitter, presses, cubes, tof: programs.map(() => tof), echo: true, stopWhenOut: false });
   const m = r.match;
   console.log(`\nsim ${r.t.toFixed(2)} s in ${r.wallMs.toFixed(0)} ms (${((r.t * 1000) / r.wallMs).toFixed(1)}x real time)`);
   console.log(`result: ${m.ended ? (m.winner === null ? "draw" : `${names[m.winner]} wins`) : "undecided"} ${m.reason ? `(${m.reason})` : ""}`);

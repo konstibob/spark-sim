@@ -111,6 +111,7 @@ function load(m: LoadMessage) {
       names: m.robots.map((r) => r.setup.name),
       autoPressA: m.autoPressA,
       tweaks: m.tweaks,
+      tof: m.robots.map((r) => r.setup.tof === true),
       cubes: m.cubes,
     },
   );
@@ -152,6 +153,10 @@ self.onmessage = async (e: MessageEvent<ToWorld>) => {
         break;
       case "robotDone":
         world?.detach(m.slot);
+        break;
+      case "tof":
+        world?.setToF(m.slot, m.enabled);
+        if (world) post({ type: "snapshot", snap: world.snapshot(0), id: loadId });
         break;
       case "start":
         world?.startSignal();

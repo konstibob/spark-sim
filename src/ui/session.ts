@@ -30,6 +30,7 @@ const LIB = Object.fromEntries(Object.entries(pyFiles).map(([k, v]) => [k.replac
 export interface RobotConfig {
   name: string;
   code: string;
+  tof?: boolean;
 }
 
 export interface MatchSetup {
@@ -116,7 +117,7 @@ export class MatchHost {
       tweaks: s.tweaks,
       cubes: s.cubes,
       robots: s.robots.map((r, slot) => ({
-        setup: { slot, name: r.name, pose: poses[slot % poses.length], code: s.run ? r.code : "" },
+        setup: { slot, name: r.name, pose: poses[slot % poses.length], code: s.run ? r.code : "", tof: r.tof },
         buffers: buffers[slot],
       })),
     });
@@ -188,6 +189,10 @@ export class MatchHost {
 
   place(slot: number, x: number, y: number, yaw: number) {
     this.send({ type: "place", slot, x, y, yaw });
+  }
+
+  setToF(slot: number, enabled: boolean) {
+    this.send({ type: "tof", slot, enabled });
   }
 
   dispose() {

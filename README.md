@@ -90,6 +90,9 @@ node deploy/serve-practice.mjs        # serves ./dist-practice on http://localho
   bytecode costs RP2040 time and every sensor read its real duration, so loop rates match the robot.
 - **Arenas with rules:** a mini-sumo dohyo, a line-following track and a free practice table.
 - **Example programs** to start from (sumo, line follower, hello).
+- **Optional VL53L5CX + ESP32-C6:** enable **VL53L5CX** above the 3D view for an 8×8 depth image,
+  visible module, field grid and measured points on every arena. Includes a proposed UART JSONL bridge
+  and MicroPython example. [Specifications, serial contract and simulation limits](docs/VL53L5CX.md).
 - **Test bench:** many headless matches in parallel → win rate with a confidence interval; watch any match again.
 - **Debugging:** a timeline to scrub every frame, telemetry strip charts, a plotter for your `print`s, a 3D
   sensor view, errors marked in the editor, autocompletion and in-app docs for the robot API.

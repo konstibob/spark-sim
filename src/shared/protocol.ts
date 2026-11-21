@@ -8,6 +8,7 @@
 
 import type { Pose } from "./arenas.ts";
 import type { MatchState } from "../world/rules.ts";
+import type { ToFSnapshot } from "./vl53l5cx.ts";
 import type { CubeView } from "./push-pull.ts";
 
 export const ST = { Idle: 0, Request: 1, Response: 2, Done: 3 } as const;
@@ -15,7 +16,7 @@ export const ST = { Idle: 0, Request: 1, Response: 2, Done: 3 } as const;
 /** Indices in the Int32 control block */
 export const C = { State: 0, Op: 1, BtnA: 4, BtnB: 5, BtnC: 6 } as const;
 export const CTL_LEN = 16;
-export const F64_LEN = 64;
+export const F64_LEN = 208; // clock + ToF metadata + 64 distances/statuses/target counts
 
 /** f64[0] = clock in µs (request: start time, response: time after the operation); arguments/results from f64[1] */
 export const OP = {
@@ -27,6 +28,8 @@ export const OP = {
   Imu: 6, // -> acc xyz (g), gyro xyz (dps), mag xyz (gauss)
   Enc: 7, // -> left, right (counts since start)
   Battery: 8, // -> mV
+  ToF: 10, // action, value -> success, resolution, Hz, ranging, sequence, capture time, distances, statuses, counts
+  ToFUart: 11, // action (0 available, 1 read, 2 configure), count/baud, rx capacity, UART id
   Green: 9, // a = green LEDs on (1) / off or another colour (0), for Challenge 2's finish signal
 } as const;
 
@@ -64,6 +67,7 @@ export interface RobotSetup {
   pose: Pose;
   /** Python source of main.py; empty = robot without a program */
   code: string;
+  tof?: boolean;
 }
 
 export interface RobotSnapshot {
@@ -83,6 +87,7 @@ export interface RobotSnapshot {
   yaw: number;
   tilt: number;
   out: boolean;
+  tof?: ToFSnapshot;
 }
 
 export interface WorldSnapshot {
@@ -131,6 +136,7 @@ export type ToWorld =
   | { type: "speed"; speed: number } // 0 = pause, Infinity = as fast as possible
   | { type: "place"; slot: number; x: number; y: number; yaw: number }
   | { type: "robotDone"; slot: number }
+  | { type: "tof"; slot: number; enabled: boolean }
   | { type: "start" } // the start signal now: button A on every robot, 5 s countdown
   | { type: "referee"; action: "rescue" | "touch" | "finish" }
   | { type: "halt" }; // all programs off, motors off, the match stops
